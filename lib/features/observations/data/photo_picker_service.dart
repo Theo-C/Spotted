@@ -56,13 +56,17 @@ class PhotoPickerService {
         if (dateStr != null) {
           takenAt = _parseExifDate(dateStr);
         }
-        // GPS — native_exif renvoie déjà lat/lng en double signés (négatif si W/S).
-        final latRaw = attrs['GPSLatitude'];
-        final lngRaw = attrs['GPSLongitude'];
-        if (latRaw is num && lngRaw is num) {
-          lat = latRaw.toDouble();
-          lng = lngRaw.toDouble();
-        }
+        // GPS — robuste : num signé, num + ref (N/S/E/W), ou string DMS "X,Y,Z"
+        lat = _parseGpsCoordinate(
+          raw: attrs['GPSLatitude'],
+          ref: attrs['GPSLatitudeRef'] as String?,
+          negativeRef: 'S',
+        );
+        lng = _parseGpsCoordinate(
+          raw: attrs['GPSLongitude'],
+          ref: attrs['GPSLongitudeRef'] as String?,
+          negativeRef: 'W',
+        );
       }
       await exif.close();
     } catch (_) {
@@ -75,6 +79,43 @@ class PhotoPickerService {
       longitude: lng,
       exif: rawExif,
     );
+  }
+
+  /// Extrait une coordonnée GPS depuis l'EXIF.
+  /// Accepte 3 formats :
+  ///   - num signé (29.5, -16.62) — déjà en degrés décimaux
+  ///   - num positif + ref "N"/"S"/"E"/"W" (28.45 + "S" = -28.45)
+  ///   - string DMS "29,30,15" (degrés, minutes, secondes)
+  double? _parseGpsCoordinate({
+    required Object? raw,
+    required String? ref,
+    required String negativeRef,
+  }) {
+    if (raw == null) return null;
+    double? value;
+    if (raw is num) {
+      value = raw.toDouble();
+    } else if (raw is String) {
+      if (raw.contains(',')) {
+        final parts = raw.split(',');
+        if (parts.length == 3) {
+          final deg = double.tryParse(parts[0].trim());
+          final min = double.tryParse(parts[1].trim());
+          final sec = double.tryParse(parts[2].trim());
+          if (deg != null && min != null && sec != null) {
+            value = deg + min / 60 + sec / 3600;
+          }
+        }
+      } else {
+        value = double.tryParse(raw.trim());
+      }
+    }
+    if (value == null) return null;
+    // Ajuste le signe selon la référence (S/W = négatif).
+    if (ref != null && ref.toUpperCase() == negativeRef) {
+      value = -value.abs();
+    }
+    return value;
   }
 
   /// Format EXIF "YYYY:MM:DD HH:mm:ss" → DateTime.
