@@ -23,16 +23,20 @@ App mobile **personnelle** (2 utilisateurs : Théo & Axelle) façon "Pokédex na
 |-----------|-------|---------------|
 | Framework | Flutter | 3.x stable |
 | Langage | Dart | 3.x |
-| State management | **Riverpod** | 2.x |
+| State management | **Riverpod** | **3.x** (mis à jour Phase 2.D) |
 | Backend | **Supabase** (Auth + Postgres + Storage) | dernière |
-| Cartographie | **Mapbox Maps SDK Flutter** (style Outdoors) | dernière |
+| Cartographie | **Mapbox Maps SDK Flutter** (style Outdoors) | 2.x |
 | Routing | **go_router** | dernière |
-| Modèles | **freezed** + **json_serializable** | dernière |
+| Modèles | **freezed** + **json_serializable** | **freezed 3.x** (mis à jour Phase 2.D) |
 | Sélection photo | `image_picker` | dernière |
 | Lecture EXIF | `native_exif` | dernière |
 | HTTP | `dio` | dernière |
 
 **À ne PAS introduire au MVP** : Drift / SQLite local, workmanager, caméra in-app, Bloc, Provider, GetX.
+
+**Lints temporairement désactivés** (commentés dans `pubspec.yaml`, à réactiver plus tard) : `custom_lint`, `riverpod_lint` — chaîne `analyzer_plugin 0.12 → analyzer 7.x` pas encore alignée. À retenter quand les linters Riverpod publient une version compatible.
+
+**Breaking changes Freezed 3 à se rappeler** : les classes de modèles s'écrivent désormais `@freezed abstract class Foo with _$Foo { ... }` (mot-clé `abstract` requis depuis 3.0).
 
 ---
 
@@ -242,10 +246,10 @@ flutter analyze
 
 À mettre à jour au fil du dev :
 
-- [ ] Bootstrap projet Flutter
-- [ ] Configuration Supabase (projet, schéma SQL, RLS)
-- [ ] Schéma BDD + seed Oise
-- [ ] Auth login Supabase
+- [x] Bootstrap projet Flutter (Phase 1, 2026-05-08)
+- [x] Configuration Supabase (projet, schéma SQL, RLS) (Phase 2.A/2.B)
+- [x] Schéma BDD + seed Oise — 50 espèces (35 oiseaux + 15 chiroptères) ; mammifères + reptiles à compléter quand curation v1 récupérée
+- [ ] Auth login Supabase (Phase 3)
 - [ ] Écran accueil + carte territoire
 - [ ] Liste catégories + liste espèces
 - [ ] Détail espèce
