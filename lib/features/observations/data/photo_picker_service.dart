@@ -1,7 +1,7 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:native_exif/native_exif.dart';
 
 /// Résultat d'une sélection de photo depuis la galerie, avec métadonnées
@@ -26,18 +26,22 @@ class PickedPhoto {
   bool get hasGps => latitude != null && longitude != null;
 }
 
+/// Sélectionne une photo et lit son EXIF.
+///
+/// Utilise [FilePicker] (intent ACTION_OPEN_DOCUMENT) plutôt que [ImagePicker]
+/// pour préserver les EXIF GPS sur Android 13+ — le nouveau Photo Picker
+/// les strippe systématiquement.
 class PhotoPickerService {
-  PhotoPickerService(this._picker);
-
-  final ImagePicker _picker;
-
-  /// Ouvre la galerie photo, lit l'EXIF du fichier sélectionné.
-  /// Renvoie null si l'utilisateur annule.
+  /// Ouvre le file picker, renvoie null si l'utilisateur annule.
   Future<PickedPhoto?> pickFromGallery() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return null;
-    final file = File(picked.path);
-    return _readExif(file);
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty) return null;
+    final path = result.files.first.path;
+    if (path == null) return null;
+    return _readExif(File(path));
   }
 
   Future<PickedPhoto> _readExif(File file) async {
@@ -141,5 +145,5 @@ class PhotoPickerService {
 }
 
 final photoPickerServiceProvider = Provider<PhotoPickerService>((ref) {
-  return PhotoPickerService(ImagePicker());
+  return PhotoPickerService();
 });

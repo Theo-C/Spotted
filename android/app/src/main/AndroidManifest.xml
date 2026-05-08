@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Permission requise pour récupérer les EXIF GPS depuis les photos
+         de la galerie (Android 10+). Sans elle, les coordonnées sont
+         redactées. -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
     <application
         android:label="spotted"
         android:name="${applicationName}"

@@ -28,7 +28,7 @@ App mobile **personnelle** (2 utilisateurs : Théo & Axelle) façon "Pokédex na
 | Cartographie | **Mapbox Maps SDK Flutter** (style Outdoors) | 2.x |
 | Routing | **go_router** | dernière |
 | Modèles | **freezed** + **json_serializable** | **freezed 3.x** (mis à jour Phase 2.D) |
-| Sélection photo | `image_picker` | dernière |
+| Sélection photo | `file_picker` | dernière (cf. note ↓) |
 | Lecture EXIF | `native_exif` | dernière |
 | HTTP | `dio` | dernière |
 
@@ -37,6 +37,8 @@ App mobile **personnelle** (2 utilisateurs : Théo & Axelle) façon "Pokédex na
 **Lints temporairement désactivés** (commentés dans `pubspec.yaml`, à réactiver plus tard) : `custom_lint`, `riverpod_lint` — chaîne `analyzer_plugin 0.12 → analyzer 7.x` pas encore alignée. À retenter quand les linters Riverpod publient une version compatible.
 
 **Breaking changes Freezed 3 à se rappeler** : les classes de modèles s'écrivent désormais `@freezed abstract class Foo with _$Foo { ... }` (mot-clé `abstract` requis depuis 3.0).
+
+**Pourquoi `file_picker` et pas `image_picker`** : sur Android 13+, le nouveau Photo Picker (`MediaStore.ACTION_PICK_IMAGES`) utilisé par `image_picker` 1.x **strippe systématiquement les EXIF GPS** par design — peu importe les permissions accordées. `file_picker` passe par `ACTION_OPEN_DOCUMENT` qui préserve les EXIF. La permission `ACCESS_MEDIA_LOCATION` est aussi déclarée dans `AndroidManifest.xml` (requise depuis Android 10 pour ne pas redacter les coords).
 
 ---
 
