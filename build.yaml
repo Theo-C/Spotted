@@ -1,0 +1,9 @@
+targets:
+  $default:
+    builders:
+      json_serializable:
+        options:
+          # Mapping automatique snake_case (Postgres) ↔ camelCase (Dart).
+          # Évite d'annoter chaque champ avec @JsonKey(name: 'foo_bar').
+          field_rename: snake
+          explicit_to_json: true

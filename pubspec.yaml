@@ -11,12 +11,12 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
 
-  # State management
-  flutter_riverpod: ^2.5.1
-  riverpod_annotation: ^2.3.5
+  # State management (Riverpod 3.x — compatible analyzer 7.x)
+  flutter_riverpod: ^3.2.1
+  riverpod_annotation: ^4.0.2
 
-  # Modèles immutables + sérialisation JSON
-  freezed_annotation: ^2.4.4
+  # Modèles immutables + sérialisation JSON (Freezed 3.x pour compat build 3.x)
+  freezed_annotation: ^3.0.0
   json_annotation: ^4.9.0
 
   # Navigation déclarative
@@ -51,13 +51,15 @@ dev_dependencies:
 
   # Code generation (Freezed + Riverpod)
   build_runner: ^2.4.11
-  freezed: ^2.5.7
+  freezed: ^3.0.0
   json_serializable: ^6.8.0
-  riverpod_generator: ^2.4.0
+  riverpod_generator: ^4.0.3
 
-  # Lint Riverpod
-  custom_lint: ^0.7.3
-  riverpod_lint: ^2.6.0
+  # Lint Riverpod — désactivés temporairement (conflit analyzer 7.x ↔
+  # analyzer_plugin 0.12.0 transitif). À réactiver quand l'écosystème
+  # rattrape l'API Element2 du nouvel analyzer.
+  # custom_lint: ^0.7.3
+  # riverpod_lint: ^2.6.0
 
 flutter:
   uses-material-design: true
