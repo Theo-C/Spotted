@@ -185,8 +185,8 @@ Script SQL ou Dart oneshot :
 
 ## Phase 3 — Auth (1-2 jours)
 
-- [ ] Créer manuellement les 2 comptes Léo + Marine dans Supabase Auth Dashboard
-- [ ] Insérer leurs entrées dans `users` avec pseudo + couleur d'accent (vert pour Léo, terracotta pour Marine)
+- [ ] Créer manuellement les 2 comptes Théo + Axelle dans Supabase Auth Dashboard
+- [ ] Insérer leurs entrées dans `users` avec pseudo + couleur d'accent (vert pour Théo, terracotta pour Axelle)
 - [ ] Écran `LoginScreen` (selon wireframe v5) — email + mdp
 - [ ] `AuthRepository` avec `signIn(email, password)` et `signOut()`
 - [ ] `currentUserProvider` (Riverpod) qui expose l'user connecté
@@ -259,7 +259,7 @@ C'est la phase la plus importante. À soigner.
 - [ ] Champ lieu textuel (pré-rempli, modifiable)
 - [ ] Sélecteur d'espèce → modal qui filtre les espèces du territoire détecté
 - [ ] Filtre rareté + recherche dans la modal
-- [ ] Toggle observateur (Léo / Marine)
+- [ ] Toggle observateur (Théo / Axelle)
 
 ### Validation et crédit
 - [ ] Au tap "Valider" :
@@ -298,7 +298,7 @@ C'est la phase la plus importante. À soigner.
 - [ ] Écran Profil avec :
   - [ ] Bloc niveau (gradient vert/or, progression vers niveau N+1)
   - [ ] Stats grid (espèces vues, obs totales, photos)
-  - [ ] Toggle observateur en gros bouton (switch Léo/Marine)
+  - [ ] Toggle observateur en gros bouton (switch Théo/Axelle)
 - [ ] Bouton vers réglages (placeholder)
 - [ ] Logout
 
@@ -344,7 +344,7 @@ C'est la phase la plus importante. À soigner.
 - [ ] Configuration `app icon` (logo 🐾 ou empreinte stylisée)
 - [ ] Configuration splash screen (vintage, vert forêt + or)
 - [ ] Build APK release : `flutter build apk --release`
-- [ ] Installation sur les téléphones de Léo et Marine
+- [ ] Installation sur les téléphones de Théo et Axelle
 - [ ] Pour iOS : TestFlight (compte Apple Developer requis, ~99 €/an) OU sideload via Xcode
 
 ### Tests réels

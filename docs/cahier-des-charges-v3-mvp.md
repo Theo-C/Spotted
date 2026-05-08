@@ -7,7 +7,7 @@
 
 ## 1. Vision (rappel)
 
-App mobile naturaliste **strictement personnelle** (Léo + Marine) façon "Pokédex" : pour chaque territoire visité, une liste d'espèces remarquables à observer avec rareté, points, et carnet de voyage géolocalisé cumulatif.
+App mobile naturaliste **strictement personnelle** (Théo + Axelle) façon "Pokédex" : pour chaque territoire visité, une liste d'espèces remarquables à observer avec rareté, points, et carnet de voyage géolocalisé cumulatif.
 
 **Différenciateurs assumés** : gamification, curation subjective des espèces "intéressantes", rareté contextuelle au territoire, carnet de voyage cumulé sur des années.
 
@@ -36,7 +36,7 @@ APRÈS la rando   → on importe la photo dans l'app, on coche l'espèce
 - 1 pays : **France**
 - 1 territoire curé : **Oise (60)** — ~71 espèces curées
 - 4 catégories : **Oiseaux, Mammifères, Reptiles, Chiroptères**
-- 1 compte partagé "Léo & Marine" avec toggle **"qui a observé ?"** sur chaque obs
+- 1 compte partagé "Théo & Axelle" avec toggle **"qui a observé ?"** sur chaque obs
 - Saisie d'observation par **import photo galerie + lecture EXIF + correction manuelle**
 - Système **points + niveaux** (formule §5)
 - Carte globale des observations (carnet géo)
@@ -116,7 +116,7 @@ Pas de libellé thématique au MVP, juste "Niveau N".
 
 ```
 User(id, email, password_hash, pseudo, color_accent)
-   -- 2 entrées : Léo et Marine
+   -- 2 entrées : Théo et Axelle
    -- Login partagé en pratique, mais distinction sur les obs
 
 Country(id, name, iso_code)
@@ -156,7 +156,7 @@ Observation(id, user_id, species_id, observed_at,
    - Lieu = coordonnées EXIF (ajustables sur mini-carte)
    - Territoire = auto-détecté (warning si hors zones curées)
 6. **Choix de l'espèce** : liste filtrée par territoire détecté + filtre rareté
-7. **Toggle observateur** : "Léo" / "Marine" (par défaut = user connecté)
+7. **Toggle observateur** : "Théo" / "Axelle" (par défaut = user connecté)
 8. **Validation** :
    - Si 1ʳᵉ obs : crédit complet + overlay de découverte célébré
    - Sinon : crédit re-obs + simple toast de confirmation
@@ -204,7 +204,7 @@ Formulaire avec :
 ## 10. Authentification MVP
 
 - Email + mot de passe (Supabase Auth)
-- Comptes pré-créés en BDD pour Léo et Marine (pas de signup public)
+- Comptes pré-créés en BDD pour Théo et Axelle (pas de signup public)
 - Pas de SSO Google/Apple
 
 ---

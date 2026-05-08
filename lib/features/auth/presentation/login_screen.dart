@@ -10,7 +10,7 @@ class LoginScreen extends StatelessWidget {
     return const PlaceholderScreen(
       title: 'Connexion',
       icon: Icons.lock_outline,
-      subtitle: 'Phase 3 : Auth Supabase (Léo / Marine).',
+      subtitle: 'Phase 3 : Auth Supabase (Théo / Axelle).',
     );
   }
 }

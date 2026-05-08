@@ -3,7 +3,7 @@
 -- =============================================================
 -- Active RLS sur toutes les tables et définit les policies.
 --
--- Logique MVP : "compte partagé Léo & Marine" → confiance mutuelle.
+-- Logique MVP : "compte partagé Théo & Axelle" → confiance mutuelle.
 -- L'app étant strictement personnelle (2 users), les policies sont
 -- volontairement permissives entre authentifiés.
 --
@@ -38,7 +38,7 @@ create policy "categories_select" on public.categories
 
 -- -------------------------------------------------------------
 -- Species & SpeciesZones
--- → CRUD complet pour authenticated (Léo ou Marine peut ajouter,
+-- → CRUD complet pour authenticated (Théo ou Axelle peut ajouter,
 -- éditer ou supprimer une espèce — c'est un compte partagé).
 -- -------------------------------------------------------------
 create policy "species_select" on public.species
@@ -67,7 +67,7 @@ create policy "species_zones_delete" on public.species_zones
 
 -- -------------------------------------------------------------
 -- Users (profil)
--- → SELECT pour tous les authentifiés (Léo voit le profil de Marine
+-- → SELECT pour tous les authentifiés (Théo voit le profil de Axelle
 --   et inversement, pour afficher le pseudo/couleur sur les obs).
 -- → UPDATE limité à son propre profil (auth.uid() = id).
 -- → Pas d'INSERT/DELETE côté app : profils créés en SQL admin
@@ -84,7 +84,7 @@ create policy "users_update_self" on public.users
 -- -------------------------------------------------------------
 -- Observations
 -- → CRUD complet pour authenticated. Justification :
---   - Léo et Marine partagent le carnet, chacun peut corriger
+--   - Théo et Axelle partagent le carnet, chacun peut corriger
 --     une obs de l'autre (ex: rectifier une espèce mal identifiée).
 --   - Le toggle "qui a observé ?" se manifeste via la colonne
 --     user_id (== observateur), pas via le user connecté.

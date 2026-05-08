@@ -382,7 +382,7 @@ const AddSpeciesScreen = ({ onBack, editMode = false }) => (
         <button className="w-full mt-4 rounded-2xl py-4" style={{ background: 'linear-gradient(135deg, #1F3D2E 0%, #2D5A42 100%)', boxShadow: '0 6px 20px -4px rgba(31, 61, 46, 0.5)' }}>
           <span style={{ fontFamily: 'Karla, sans-serif' }} className="font-bold text-[#FAF6EC] uppercase tracking-wider text-sm">{editMode ? 'Enregistrer les modifications' : 'Ajouter au carnet'}</span>
         </button>
-        <p style={{ fontFamily: 'Karla, sans-serif' }} className="text-center text-[10px] text-[#6B5D4F] mt-2 italic">{editMode ? 'Marine sera notifiée des changements' : 'Visible aussi par Marine'}</p>
+        <p style={{ fontFamily: 'Karla, sans-serif' }} className="text-center text-[10px] text-[#6B5D4F] mt-2 italic">{editMode ? 'Axelle sera notifiée des changements' : 'Visible aussi par Axelle'}</p>
       </div>
     </div>
   </div>
@@ -879,12 +879,12 @@ const ObservationsMapScreen = () => (
   </div>
 );
 
-const ProfileScreen = ({ onOpenSettings, onOpenMarine }) => (
+const ProfileScreen = ({ onOpenSettings, onOpenAxelle }) => (
   <div className="flex flex-col h-full overflow-y-auto">
     <div className="px-6 pt-12 pb-3 flex items-start justify-between">
       <div>
         <p style={{ fontFamily: 'Karla, sans-serif' }} className="text-[11px] uppercase tracking-[0.25em] text-[#B8624A] font-bold">Naturaliste</p>
-        <h1 style={{ fontFamily: 'Cormorant Garamond, serif' }} className="text-[32px] leading-tight font-semibold text-[#1F3D2E]">Léo</h1>
+        <h1 style={{ fontFamily: 'Cormorant Garamond, serif' }} className="text-[32px] leading-tight font-semibold text-[#1F3D2E]">Théo</h1>
       </div>
       <button onClick={onOpenSettings} className="w-9 h-9 rounded-full bg-[#FAF6EC] border-2 border-[#1F3D2E] flex items-center justify-center"><Settings size={16} className="text-[#1F3D2E]" /></button>
     </div>
@@ -923,13 +923,13 @@ const ProfileScreen = ({ onOpenSettings, onOpenMarine }) => (
       ))}
     </div>
 
-    <button onClick={onOpenMarine} className="mx-6 my-5 p-4 rounded-2xl bg-[#FAF6EC] border-2 border-[#E8E0CE] active:scale-[0.98] transition-transform">
+    <button onClick={onOpenAxelle} className="mx-6 my-5 p-4 rounded-2xl bg-[#FAF6EC] border-2 border-[#E8E0CE] active:scale-[0.98] transition-transform">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #B8624A 0%, #C68B5A 100%)' }}><span className="text-base">🐾</span></div>
           <div className="text-left">
             <p style={{ fontFamily: 'Karla, sans-serif' }} className="text-[10px] uppercase tracking-wider text-[#6B5D4F] font-bold">Mon binôme</p>
-            <p style={{ fontFamily: 'Cormorant Garamond, serif' }} className="text-base text-[#1F3D2E] font-semibold">Marine · Niveau 3 · 12 espèces</p>
+            <p style={{ fontFamily: 'Cormorant Garamond, serif' }} className="text-base text-[#1F3D2E] font-semibold">Axelle · Niveau 3 · 12 espèces</p>
           </div>
         </div>
         <ChevronRight size={18} className="text-[#1F3D2E]" />
@@ -938,12 +938,12 @@ const ProfileScreen = ({ onOpenSettings, onOpenMarine }) => (
   </div>
 );
 
-const MarineProfileScreen = ({ onBack }) => (
+const AxelleProfileScreen = ({ onBack }) => (
   <div className="flex flex-col h-full overflow-y-auto">
     <div className="px-6 pt-12 pb-3">
       <button onClick={onBack} className="mb-3 -ml-1 flex items-center gap-1 text-[#1F3D2E]"><ChevronLeft size={20} strokeWidth={2.5} /><span style={{ fontFamily: 'Karla, sans-serif' }} className="text-sm font-semibold">Profil</span></button>
       <p style={{ fontFamily: 'Karla, sans-serif' }} className="text-[11px] uppercase tracking-[0.25em] text-[#B8624A] font-bold">Naturaliste · Binôme</p>
-      <h1 style={{ fontFamily: 'Cormorant Garamond, serif' }} className="text-[32px] leading-tight font-semibold text-[#1F3D2E]">Marine</h1>
+      <h1 style={{ fontFamily: 'Cormorant Garamond, serif' }} className="text-[32px] leading-tight font-semibold text-[#1F3D2E]">Axelle</h1>
     </div>
 
     <div className="mx-6 mb-5 p-5 rounded-2xl relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #B8624A 0%, #C68B5A 60%, #B8624A 100%)', boxShadow: '0 8px 24px -8px rgba(184, 98, 74, 0.5)' }}>
@@ -964,7 +964,7 @@ const MarineProfileScreen = ({ onBack }) => (
             <span style={{ fontFamily: 'Cormorant Garamond, serif' }} className={`text-2xl font-bold w-12 ${row.b > row.a ? 'text-[#B8624A]' : 'text-[#6B5D4F]'}`}>{row.b}</span>
           </div>
         ))}
-        <div className="flex items-center px-4 py-2 bg-[#1F3D2E]"><span style={{ fontFamily: 'Karla, sans-serif' }} className="text-[10px] font-bold text-[#FAF6EC] uppercase tracking-wider w-12 text-right">Toi</span><span className="flex-1" /><span style={{ fontFamily: 'Karla, sans-serif' }} className="text-[10px] font-bold text-[#FFB870] uppercase tracking-wider w-12">Marine</span></div>
+        <div className="flex items-center px-4 py-2 bg-[#1F3D2E]"><span style={{ fontFamily: 'Karla, sans-serif' }} className="text-[10px] font-bold text-[#FAF6EC] uppercase tracking-wider w-12 text-right">Toi</span><span className="flex-1" /><span style={{ fontFamily: 'Karla, sans-serif' }} className="text-[10px] font-bold text-[#FFB870] uppercase tracking-wider w-12">Axelle</span></div>
       </div>
     </div>
 
@@ -991,7 +991,7 @@ const SettingsScreen = ({ onBack }) => (
       <div>
         <p style={{ fontFamily: 'Karla, sans-serif' }} className="text-[10px] uppercase tracking-widest text-[#6B5D4F] font-bold mb-2">Compte</p>
         <div className="bg-[#FAF6EC] rounded-2xl border-2 border-[#E8E0CE] overflow-hidden">
-          {[{ icon: User, label: 'Profil & pseudo', value: 'Léo' }, { icon: Bell, label: 'Notifications', value: 'Activées' }, { icon: Users, label: 'Mon binôme', value: 'Marine' }].map((it, i) => (
+          {[{ icon: User, label: 'Profil & pseudo', value: 'Théo' }, { icon: Bell, label: 'Notifications', value: 'Activées' }, { icon: Users, label: 'Mon binôme', value: 'Axelle' }].map((it, i) => (
             <button key={i} className={`w-full flex items-center gap-3 px-4 py-3.5 ${i > 0 ? 'border-t border-[#E8E0CE]' : ''}`}>
               <it.icon size={18} className="text-[#1F3D2E]" />
               <span style={{ fontFamily: 'Cormorant Garamond, serif' }} className="flex-1 text-left text-base text-[#1F3D2E] font-semibold">{it.label}</span>
@@ -1075,7 +1075,7 @@ export default function App() {
   else if (view.name === 'edit-species') screen = <AddSpeciesScreen onBack={() => setView({ name: 'main' })} editMode={true} />;
   else if (view.name === 'add-region') screen = <AddRegionScreen onBack={() => setView({ name: 'main' })} />;
   else if (view.name === 'settings') screen = <SettingsScreen onBack={() => setView({ name: 'main' })} />;
-  else if (view.name === 'marine') screen = <MarineProfileScreen onBack={() => setView({ name: 'main' })} />;
+  else if (view.name === 'axelle') screen = <AxelleProfileScreen onBack={() => setView({ name: 'main' })} />;
   else {
     if (tab === 'explore') {
       if (drillStack.length === 0) screen = <HomeScreen onSelectDept={(d) => drillTo(d)} onSelectDeptMap={() => { setTab('map'); }} onOpenAddMenu={() => setOverlay({ type: 'add-menu' })} />;
@@ -1083,7 +1083,7 @@ export default function App() {
       else if (drillStack.length === 2) screen = <SpeciesListScreen category={drillStack[1]} onBack={drillBack} onSelectSpecies={(s) => drillTo(s)} />;
       else screen = <SpeciesDetailScreen speciesId={drillStack[2]} onBack={drillBack} onObserve={(sp) => setOverlay({ type: 'photo-choice', species: sp })} onEdit={() => setView({ name: 'edit-species' })} />;
     } else if (tab === 'map') screen = <ObservationsMapScreen />;
-    else if (tab === 'profile') screen = <ProfileScreen onOpenSettings={() => goTo('settings')} onOpenMarine={() => goTo('marine')} />;
+    else if (tab === 'profile') screen = <ProfileScreen onOpenSettings={() => goTo('settings')} onOpenAxelle={() => goTo('axelle')} />;
   }
 
   const hideNav = view.name !== 'main' || (tab === 'explore' && drillStack.length >= 3);
@@ -1139,7 +1139,7 @@ export default function App() {
           { label: 'Modif lieu/date', action: () => { setView({ name: 'main' }); setTab('explore'); setDrillStack(['oise', 'oiseaux', 5]); setOverlay({ type: 'edit-meta', species: SPECIES.find(s => s.id === 5) }); } },
           { label: 'Carnet géo', action: () => { setView({ name: 'main' }); setTab('map'); setDrillStack([]); setOverlay(null); } },
           { label: 'Profil', action: () => { setView({ name: 'main' }); setTab('profile'); setDrillStack([]); setOverlay(null); } },
-          { label: 'Profil Marine', action: () => { setView({ name: 'marine' }); setOverlay(null); } },
+          { label: 'Profil Axelle', action: () => { setView({ name: 'axelle' }); setOverlay(null); } },
           { label: 'Réglages', action: () => { setView({ name: 'settings' }); setOverlay(null); } },
         ].map((j) => (
           <button key={j.label} onClick={j.action} style={{ fontFamily: 'Karla, sans-serif' }} className="px-3 py-1.5 rounded-full text-xs bg-[#FAF6EC]/10 border border-[#C4A572]/40 text-[#C4A572] hover:bg-[#C4A572]/20 transition-colors font-semibold">

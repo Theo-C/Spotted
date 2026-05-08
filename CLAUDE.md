@@ -4,7 +4,7 @@
 
 ## 🎯 Projet
 
-App mobile **personnelle** (2 utilisateurs : Léo & Marine) façon "Pokédex naturaliste" : pour chaque territoire visité, on consulte les espèces remarquables, on les observe sur le terrain, on importe la photo dans l'app pour valider la découverte et accumuler des points.
+App mobile **personnelle** (2 utilisateurs : Théo & Axelle) façon "Pokédex naturaliste" : pour chaque territoire visité, on consulte les espèces remarquables, on les observe sur le terrain, on importe la photo dans l'app pour valider la découverte et accumuler des points.
 
 **MVP scope** : France, 1 territoire (Oise), 4 catégories animales, ~71 espèces curées, compte partagé, ~4-6 semaines de dev.
 
@@ -180,7 +180,7 @@ Si l'utilisateur ajoute une photo à une 1ʳᵉ observation déjà validée sans
 Niveau N atteint à `N² × 100` points cumulés. Pas de descente possible (toujours "+", jamais "-").
 
 ### Suppression d'un territoire d'une espèce
-Bloquée si **n'importe quel utilisateur** (Léo OU Marine) a déjà validé une observation sur ce territoire pour cette espèce. Affichage cadenas dans le formulaire d'édition.
+Bloquée si **n'importe quel utilisateur** (Théo OU Axelle) a déjà validé une observation sur ce territoire pour cette espèce. Affichage cadenas dans le formulaire d'édition.
 
 ### `is_first_for_user`
 À calculer au moment de l'INSERT d'une `Observation` :
