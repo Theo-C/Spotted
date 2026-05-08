@@ -75,21 +75,19 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            width: 36,
-            height: 36,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: forestGreen,
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 6,
-                  offset: Offset(0, 2),
-                ),
-              ],
+          Material(
+            color: forestGreen,
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => context.push('/observation/new'),
+              child: const SizedBox(
+                width: 36,
+                height: 36,
+                child: Icon(Icons.add, color: surfaceBase, size: 18),
+              ),
             ),
-            child: const Icon(Icons.add, color: surfaceBase, size: 18),
           ),
         ],
       ),

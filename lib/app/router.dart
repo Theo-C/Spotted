@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
+import '../features/observations/presentation/new_observation_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
 import '../features/species/presentation/species_detail_screen.dart';
@@ -32,6 +33,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/login',
         builder: (_, _) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/observation/new',
+        builder: (_, state) => NewObservationScreen(
+          preselectedSpeciesId: state.uri.queryParameters['species'],
+        ),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>

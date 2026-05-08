@@ -156,7 +156,9 @@ class _DetailBody extends StatelessWidget {
                   _ObserveButton(
                     rarity: detail.rarity,
                     onTap: () {
-                      // Phase 5 : nouveau flow d'observation.
+                      context.push(
+                        '/observation/new?species=${detail.species.id}',
+                      );
                     },
                   ),
               ],
