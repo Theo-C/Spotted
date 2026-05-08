@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,6 +50,10 @@ class PhotoPickerService {
       final exif = await Exif.fromPath(file.path);
       final attrs = await exif.getAttributes();
       rawExif = attrs;
+      developer.log(
+        'EXIF dump for ${file.path}: $attrs',
+        name: 'photo_picker',
+      );
       if (attrs != null) {
         // Date
         final dateStr = attrs['DateTimeOriginal'] as String? ??
