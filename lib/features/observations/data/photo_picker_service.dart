@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -33,14 +34,21 @@ class PickedPhoto {
 /// les strippe systématiquement.
 class PhotoPickerService {
   /// Ouvre le file picker, renvoie null si l'utilisateur annule.
+  /// On utilise FileType.custom pour forcer ACTION_OPEN_DOCUMENT — FileType.image
+  /// peut basculer sur le Photo Picker selon les vendors Android.
   Future<PickedPhoto?> pickFromGallery() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'heic', 'heif'],
       withData: false,
     );
     if (result == null || result.files.isEmpty) return null;
     final path = result.files.first.path;
     if (path == null) return null;
+    developer.log(
+      'file_picker returned path: $path',
+      name: 'photo_picker',
+    );
     return _readExif(File(path));
   }
 
@@ -53,6 +61,10 @@ class PhotoPickerService {
       final exif = await Exif.fromPath(file.path);
       final attrs = await exif.getAttributes();
       rawExif = attrs;
+      developer.log(
+        'EXIF attrs (${attrs?.length ?? 0} keys): $attrs',
+        name: 'photo_picker',
+      );
       if (attrs != null) {
         // Date
         final dateStr = attrs['DateTimeOriginal'] as String? ??
