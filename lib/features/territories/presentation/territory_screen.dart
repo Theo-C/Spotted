@@ -72,7 +72,8 @@ class TerritoryScreen extends ConsumerWidget {
                     'Erreur de chargement',
                     style: GoogleFonts.karla(color: textMuted),
                   ),
-                  data: (items) => _CategoriesGrid(items: items),
+                  data: (items) =>
+                      _CategoriesGrid(items: items, zoneId: zoneId),
                 ),
               ),
               const SizedBox(height: 24),
@@ -214,9 +215,10 @@ class _OverallProgressSkeleton extends StatelessWidget {
 }
 
 class _CategoriesGrid extends StatelessWidget {
-  const _CategoriesGrid({required this.items});
+  const _CategoriesGrid({required this.items, required this.zoneId});
 
   final List<CategoryProgress> items;
+  final String zoneId;
 
   @override
   Widget build(BuildContext context) {
@@ -227,15 +229,18 @@ class _CategoriesGrid extends StatelessWidget {
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
       childAspectRatio: 0.95,
-      children: items.map(_CategoryTile.new).toList(),
+      children: items
+          .map((p) => _CategoryTile(progress: p, zoneId: zoneId))
+          .toList(),
     );
   }
 }
 
 class _CategoryTile extends StatelessWidget {
-  const _CategoryTile(this.progress);
+  const _CategoryTile({required this.progress, required this.zoneId});
 
   final CategoryProgress progress;
+  final String zoneId;
 
   @override
   Widget build(BuildContext context) {
@@ -245,7 +250,7 @@ class _CategoryTile extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () {
-          // Navigation vers la liste d'espèces — Phase 4.C
+          context.go('/territory/$zoneId/category/${progress.category.id}');
         },
         child: Container(
           padding: const EdgeInsets.all(14),

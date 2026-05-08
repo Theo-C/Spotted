@@ -9,6 +9,7 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
+import '../features/species/presentation/species_list_screen.dart';
 import '../features/territories/presentation/territory_screen.dart';
 import 'app_shell.dart';
 
@@ -46,6 +47,15 @@ final routerProvider = Provider<GoRouter>((ref) {
                     builder: (_, state) => TerritoryScreen(
                       zoneId: state.pathParameters['id']!,
                     ),
+                    routes: [
+                      GoRoute(
+                        path: 'category/:cid',
+                        builder: (_, state) => SpeciesListScreen(
+                          zoneId: state.pathParameters['id']!,
+                          categoryId: state.pathParameters['cid']!,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
