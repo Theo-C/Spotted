@@ -35,6 +35,10 @@ dependencies:
   file_picker: ^8.1.4
   native_exif: ^0.6.2
 
+  # Demande runtime de la permission ACCESS_MEDIA_LOCATION sans laquelle
+  # Android redacte les EXIF GPS lors de la copie en cache app.
+  permission_handler: ^11.3.1
+
   # HTTP (pour Mapbox Geocoding API)
   dio: ^5.5.0+1
 

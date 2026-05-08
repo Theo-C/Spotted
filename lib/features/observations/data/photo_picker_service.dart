@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:native_exif/native_exif.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Résultat d'une sélection de photo depuis la galerie, avec métadonnées
 /// extraites de l'EXIF (si disponibles).
@@ -36,7 +37,17 @@ class PhotoPickerService {
   /// Ouvre le file picker, renvoie null si l'utilisateur annule.
   /// On utilise FileType.custom pour forcer ACTION_OPEN_DOCUMENT — FileType.image
   /// peut basculer sur le Photo Picker selon les vendors Android.
+  ///
+  /// On demande ACCESS_MEDIA_LOCATION au runtime (Android 10+) AVANT le pick
+  /// pour que les EXIF GPS ne soient pas redactés lors de la copie en cache.
   Future<PickedPhoto?> pickFromGallery() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.accessMediaLocation.request();
+      developer.log(
+        'ACCESS_MEDIA_LOCATION runtime status: $status',
+        name: 'photo_picker',
+      );
+    }
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['jpg', 'jpeg', 'png', 'heic', 'heif'],

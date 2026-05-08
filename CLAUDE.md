@@ -30,6 +30,7 @@ App mobile **personnelle** (2 utilisateurs : Théo & Axelle) façon "Pokédex na
 | Modèles | **freezed** + **json_serializable** | **freezed 3.x** (mis à jour Phase 2.D) |
 | Sélection photo | `file_picker` | dernière (cf. note ↓) |
 | Lecture EXIF | `native_exif` | dernière |
+| Permissions runtime | `permission_handler` | dernière (requis pour `ACCESS_MEDIA_LOCATION`) |
 | HTTP | `dio` | dernière |
 
 **À ne PAS introduire au MVP** : Drift / SQLite local, workmanager, caméra in-app, Bloc, Provider, GetX.
@@ -38,7 +39,9 @@ App mobile **personnelle** (2 utilisateurs : Théo & Axelle) façon "Pokédex na
 
 **Breaking changes Freezed 3 à se rappeler** : les classes de modèles s'écrivent désormais `@freezed abstract class Foo with _$Foo { ... }` (mot-clé `abstract` requis depuis 3.0).
 
-**Pourquoi `file_picker` et pas `image_picker`** : sur Android 13+, le nouveau Photo Picker (`MediaStore.ACTION_PICK_IMAGES`) utilisé par `image_picker` 1.x **strippe systématiquement les EXIF GPS** par design — peu importe les permissions accordées. `file_picker` passe par `ACTION_OPEN_DOCUMENT` qui préserve les EXIF. La permission `ACCESS_MEDIA_LOCATION` est aussi déclarée dans `AndroidManifest.xml` (requise depuis Android 10 pour ne pas redacter les coords).
+**Pourquoi `file_picker` et pas `image_picker`** : sur Android 13+, le nouveau Photo Picker (`MediaStore.ACTION_PICK_IMAGES`) utilisé par `image_picker` 1.x **strippe systématiquement les EXIF GPS** par design — peu importe les permissions accordées. `file_picker` passe par `ACTION_OPEN_DOCUMENT` qui préserve les EXIF. La permission `ACCESS_MEDIA_LOCATION` doit être :
+- déclarée dans `AndroidManifest.xml` (requise depuis Android 10)
+- **demandée au runtime** via `permission_handler` AVANT le pick (sans elle, Android redacte les coords lors de la copie en cache app)
 
 ---
 
