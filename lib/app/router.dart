@@ -9,6 +9,7 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
+import '../features/species/presentation/species_detail_screen.dart';
 import '../features/species/presentation/species_list_screen.dart';
 import '../features/territories/presentation/territory_screen.dart';
 import 'app_shell.dart';
@@ -54,6 +55,15 @@ final routerProvider = Provider<GoRouter>((ref) {
                           zoneId: state.pathParameters['id']!,
                           categoryId: state.pathParameters['cid']!,
                         ),
+                        routes: [
+                          GoRoute(
+                            path: 'species/:sid',
+                            builder: (_, state) => SpeciesDetailScreen(
+                              zoneId: state.pathParameters['id']!,
+                              speciesId: state.pathParameters['sid']!,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),

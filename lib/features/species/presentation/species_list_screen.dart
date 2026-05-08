@@ -170,6 +170,11 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
                         rarity: item.rarity,
                         categoryIconKey: categoryIcon,
                         observed: observed.contains(item.species.id),
+                        onTap: () {
+                          context.go(
+                            '/territory/${widget.zoneId}/category/${widget.categoryId}/species/${item.species.id}',
+                          );
+                        },
                       );
                     },
                   );
@@ -387,12 +392,14 @@ class _SpeciesCard extends StatelessWidget {
     required this.rarity,
     required this.categoryIconKey,
     required this.observed,
+    required this.onTap,
   });
 
   final dynamic species; // Species
   final Rarity rarity;
   final String categoryIconKey;
   final bool observed;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -402,9 +409,7 @@ class _SpeciesCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          // Navigation détail espèce — Phase 4.D
-        },
+        onTap: onTap,
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
