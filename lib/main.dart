@@ -23,16 +23,16 @@ Future<void> main() async {
   runApp(const ProviderScope(child: SpottedApp()));
 }
 
-class SpottedApp extends StatelessWidget {
+class SpottedApp extends ConsumerWidget {
   const SpottedApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp.router(
       title: 'Spotted',
       debugShowCheckedModeBanner: false,
       theme: appTheme(),
-      routerConfig: appRouter,
+      routerConfig: ref.watch(routerProvider),
     );
   }
 }
