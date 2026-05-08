@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
+import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/level.dart';
+import '../data/territory_progress_provider.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -24,7 +27,10 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: 20),
               const _SectionLabel(text: 'Mes terrains'),
               const SizedBox(height: 8),
-              _OiseCard(progressAsync: ref.watch(oiseProgressProvider)),
+              _OiseCard(
+                progressAsync: ref.watch(oiseProgressProvider),
+                zoneAsync: ref.watch(oiseZoneProvider),
+              ),
               const SizedBox(height: 24),
             ],
           ),
@@ -260,9 +266,13 @@ class _SectionLabel extends StatelessWidget {
 }
 
 class _OiseCard extends StatelessWidget {
-  const _OiseCard({required this.progressAsync});
+  const _OiseCard({
+    required this.progressAsync,
+    required this.zoneAsync,
+  });
 
   final AsyncValue<TerritoryProgress> progressAsync;
+  final AsyncValue<Zone> zoneAsync;
 
   @override
   Widget build(BuildContext context) {
@@ -283,13 +293,22 @@ class _OiseCard extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _OiseMapPlaceholder(),
-              Container(height: 2, color: const Color(0xFFE8E0CE)),
-              _OiseInfo(progressAsync: progressAsync),
-            ],
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                final zone = zoneAsync.asData?.value;
+                if (zone != null) context.go('/territory/${zone.id}');
+              },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _OiseMapPlaceholder(),
+                  Container(height: 2, color: const Color(0xFFE8E0CE)),
+                  _OiseInfo(progressAsync: progressAsync),
+                ],
+              ),
+            ),
           ),
         ),
       ),

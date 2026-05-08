@@ -9,6 +9,7 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
+import '../features/territories/presentation/territory_screen.dart';
 import 'app_shell.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -39,6 +40,14 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/',
                 builder: (_, _) => const HomeScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'territory/:id',
+                    builder: (_, state) => TerritoryScreen(
+                      zoneId: state.pathParameters['id']!,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
