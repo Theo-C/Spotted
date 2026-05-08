@@ -145,9 +145,9 @@ on conflict (species_id, zone_id) do nothing;
 --   order by sz.rarity;
 --
 -- Résultat attendu (oiseaux + chiroptères) :
---   common    | 11
---   rare      | 24
---   epic      | 11
---   legendary |  4
+--   common    |  9
+--   rare      | 22
+--   epic      | 13
+--   legendary |  6
 --   Total : 50
 -- =============================================================
