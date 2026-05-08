@@ -104,6 +104,10 @@ class _NewObservationScreenState
       final client = ref.read(supabaseClientProvider);
       final oise = await ref.read(oiseZoneProvider.future);
       final speciesId = _selectedSpeciesId!;
+      // TODO Phase 6 — Bloquer si la photo est hors d'une zone curée.
+      // Aujourd'hui : on assigne zone_id = Oise même si la photo est dans l'Aisne ou ailleurs.
+      // Phase 6 : reverse-geocoding via Mapbox → si region != "Oise", bloquer la
+      // validation OU permettre le pinpoint manuel via mini-carte.
       final lat = _lat ?? 49.41; // centre approximatif Oise
       final lng = _lng ?? 2.82;
 

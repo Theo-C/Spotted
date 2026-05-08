@@ -280,6 +280,7 @@ C'est la phase la plus importante. À soigner.
 
 ## Phase 6 — Carnet géo Mapbox (4-5 jours)
 
+### Carte du carnet
 - [ ] Setup Mapbox dans l'écran Carnet
 - [ ] Style "Outdoors" appliqué
 - [ ] Charger toutes les `observations` de l'user
@@ -289,7 +290,14 @@ C'est la phase la plus importante. À soigner.
 - [ ] Filtres en haut (catégorie / rareté / observateur)
 - [ ] Stats sous la carte (nb obs, lieux, jours actifs)
 
-**✅ DoD Phase 6** : Carte qui affiche toutes les obs avec leurs marqueurs colorés, tap pour détail.
+### Reverse-geocoding + détection territoire (dette Phase 5)
+- [ ] Service `GeocodingService` (Mapbox Geocoding API via `dio`)
+- [ ] Dans le form d'observation : afficher commune + département depuis lat/lng
+- [ ] **Bloquer la validation si la photo est hors zones curées** (= département != Oise au MVP). Le bouton "Ajouter au carnet" est désactivé avec un message "Cette photo est hors d'une zone curée. Modifie le lieu manuellement ou choisis une autre photo."
+- [ ] Mini-carte Mapbox cliquable dans le form pour permettre le **pinpoint manuel** (cas dégradé : photo sans GPS, ou hors territoire mais user veut quand même reclasser)
+- [ ] Détection robuste via comparaison du `region.name` retourné par Mapbox (ex: "Oise") vs nos zones en BDD (`short_code = '60'`)
+
+**✅ DoD Phase 6** : Carte qui affiche toutes les obs avec leurs marqueurs colorés, tap pour détail. Form d'obs refuse les photos hors Oise sauf si l'user repositionne manuellement.
 
 ---
 
