@@ -56,12 +56,7 @@ class GeocodingService {
         },
       );
       final features = response.data?['features'] as List?;
-      if (features == null || features.isEmpty) {
-        debugPrint(
-          '[geocoding] no features. Status=${response.statusCode}',
-        );
-        return null;
-      }
+      if (features == null || features.isEmpty) return null;
       final feature = features.first as Map<String, dynamic>;
       final props = feature['properties'] as Map<String, dynamic>?;
       final ctx = props?['context'] as Map<String, dynamic>?;
@@ -79,9 +74,6 @@ class GeocodingService {
       final region = nameOf('region') ?? nameOf('district');
       final country = nameOf('country');
 
-      debugPrint(
-        '[geocoding] ($lat,$lng) → place=$place region=$region country=$country (raw context keys: ${ctx?.keys.join(",")})',
-      );
       return GeocodingResult(place: place, region: region, country: country);
     } on DioException catch (e) {
       debugPrint(

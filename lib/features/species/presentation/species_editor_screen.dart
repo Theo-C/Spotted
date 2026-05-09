@@ -349,12 +349,7 @@ final _hasObservationsProvider =
       .eq('species_id', speciesId)
       .eq('zone_id', oise.id)
       .limit(1);
-  final has = (rows as List).isNotEmpty;
-  debugPrint(
-    '[species-editor] hasObservations(speciesId=$speciesId, zoneId=${oise.id}) = $has '
-    '(rowsCount=${(rows).length})',
-  );
-  return has;
+  return (rows as List).isNotEmpty;
 });
 
 class _Label extends StatelessWidget {

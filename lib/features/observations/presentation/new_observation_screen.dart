@@ -214,10 +214,6 @@ class _NewObservationScreenState
         final geocoding = await ref
             .read(geocodingServiceProvider)
             .reverseGeocode(lat: _lat!, lng: _lng!);
-        debugPrint(
-          'Territory check: lat=$_lat lng=$_lng → place=${geocoding?.place} region=${geocoding?.region} country=${geocoding?.country}',
-        );
-
         final country = geocoding?.country;
         final region = geocoding?.region;
 
