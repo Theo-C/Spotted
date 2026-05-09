@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/services/onboarding_service.dart';
 import '../../../core/utils/env.dart';
 import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
@@ -23,7 +24,9 @@ class HomeScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const _Header(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              const _CameraGpsTipCard(),
+              const SizedBox(height: 12),
               _LevelCard(levelAsync: ref.watch(accountLevelProvider)),
               const SizedBox(height: 20),
               const _SectionLabel(text: 'Mes terrains'),
@@ -37,6 +40,108 @@ class HomeScreen extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Tip dismissible affiché tant que l'user n'a pas confirmé qu'il a activé
+/// l'enregistrement de la localisation dans son app caméra. Persisté local
+/// via `shared_preferences` (cf. OnboardingService).
+class _CameraGpsTipCard extends ConsumerWidget {
+  const _CameraGpsTipCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final visibleAsync = ref.watch(cameraGpsTipVisibleProvider);
+    return visibleAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (visible) {
+        if (!visible) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  gold.withValues(alpha: 0.10),
+                  gold.withValues(alpha: 0.20),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: gold, width: 1.2),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.lightbulb_outline,
+                    size: 18, color: gold),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Avant ta première sortie',
+                        style: GoogleFonts.cormorantGaramond(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: forestGreen,
+                          height: 1.1,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "Active « Enregistrer la localisation » dans ton app caméra "
+                        "(Open Camera, Google Camera, etc.) pour que les coordonnées "
+                        "soient lues automatiquement à l'import.",
+                        style: GoogleFonts.karla(
+                          fontSize: 12,
+                          color: textPrimary,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: () async {
+                            await ref
+                                .read(onboardingServiceProvider)
+                                .markCameraGpsTipSeen();
+                            ref.invalidate(cameraGpsTipVisibleProvider);
+                          },
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 0,
+                              vertical: 0,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            "C'EST FAIT",
+                            style: GoogleFonts.karla(
+                              fontSize: 11,
+                              letterSpacing: 1.5,
+                              fontWeight: FontWeight.bold,
+                              color: forestGreen,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

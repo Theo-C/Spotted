@@ -389,6 +389,10 @@ class _NewObservationScreenState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _PhotoSlot(photo: _photo, onTap: _pickPhoto),
+            if (_photo != null && !_photo!.hasGps) ...[
+              const SizedBox(height: 12),
+              const _NoGpsTipBanner(),
+            ],
             if (!_suggestionDismissed && (_identifying || _identification != null)) ...[
               const SizedBox(height: 12),
               _IaSuggestionCard(
@@ -643,6 +647,52 @@ class _ReadOnlyField extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _NoGpsTipBanner extends StatelessWidget {
+  const _NoGpsTipBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: terracotta.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: terracotta.withValues(alpha: 0.4), width: 1.2),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, size: 16, color: terracotta),
+          const SizedBox(width: 10),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  color: textPrimary,
+                  height: 1.4,
+                ),
+                children: [
+                  TextSpan(
+                    text: "Pas de GPS dans cette photo. ",
+                    style: GoogleFonts.karla(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(
+                    text:
+                        "Active « Enregistrer la localisation » dans ton app caméra "
+                        "pour automatiser les futures obs. En attendant, ajuste la position "
+                        "manuellement sur la mini-carte ci-dessous.",
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
