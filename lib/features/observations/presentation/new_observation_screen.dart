@@ -14,6 +14,7 @@ import '../../../shared/providers/supabase_client_provider.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/points.dart';
 import '../../species/data/species_repository.dart';
+import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/territory_progress_provider.dart';
 import '../data/observation_repository.dart';
 import '../data/observed_species_provider.dart';
@@ -254,6 +255,10 @@ class _NewObservationScreenState
             const _Label('Coordonnées'),
             const SizedBox(height: 6),
             _CoordsField(lat: _lat, lng: _lng),
+            if (_lat != null && _lng != null) ...[
+              const SizedBox(height: 6),
+              _PlaceDisplay(lat: _lat!, lng: _lng!),
+            ],
             const SizedBox(height: 16),
             const _Label('Espèce'),
             const SizedBox(height: 6),
@@ -473,6 +478,64 @@ class _ReadOnlyField extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PlaceDisplay extends ConsumerWidget {
+  const _PlaceDisplay({required this.lat, required this.lng});
+
+  final double lat;
+  final double lng;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final geocodingAsync = ref.watch(
+      reverseGeocodingProvider((lat: lat, lng: lng)),
+    );
+    return geocodingAsync.when(
+      loading: () => Row(
+        children: [
+          SizedBox(
+            width: 10,
+            height: 10,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: textSecondary.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Lecture du lieu…',
+            style: GoogleFonts.karla(
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+              color: textSecondary,
+            ),
+          ),
+        ],
+      ),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (result) {
+        final name = result?.displayName;
+        if (name == null) return const SizedBox.shrink();
+        return Row(
+          children: [
+            const Icon(Icons.place_outlined, size: 14, color: terracotta),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                name,
+                style: GoogleFonts.cormorantGaramond(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: forestGreen,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
