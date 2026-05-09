@@ -1226,18 +1226,20 @@ class _MiniMapPicker extends StatefulWidget {
 class _MiniMapPickerState extends State<_MiniMapPicker> {
   MapboxMap? _map;
 
-  // Coords figées au mount — utilisées dans le viewport pour qu'il ne soit
-  // pas re-appliqué à chaque rebuild parent (sinon le zoom user est reset
-  // à chaque pan local, qui déclenche onMapIdle → setState parent → rebuild).
-  // Pour recentrer après ce mount, on appelle _flyTo() explicitement.
-  late final double _initialLat;
-  late final double _initialLng;
+  // Viewport mémoïsé au mount. Indispensable : à chaque rebuild parent,
+  // créer une nouvelle instance CameraViewportState() ferait que Mapbox
+  // ré-applique le viewport (par comparaison d'identité), ce qui reset le
+  // zoom à 11 à chaque pan/zoom de l'utilisateur. En gardant la même
+  // instance, Mapbox ignore.
+  late final CameraViewportState _initialViewport;
 
   @override
   void initState() {
     super.initState();
-    _initialLat = widget.lat;
-    _initialLng = widget.lng;
+    _initialViewport = CameraViewportState(
+      center: Point(coordinates: Position(widget.lng, widget.lat)),
+      zoom: 11,
+    );
   }
 
   Future<void> _onMapCreated(MapboxMap map) async {
@@ -1321,10 +1323,7 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
         child: Stack(
           children: [
             MapWidget(
-              viewport: CameraViewportState(
-                center: Point(coordinates: Position(_initialLng, _initialLat)),
-                zoom: 11,
-              ),
+              viewport: _initialViewport,
               styleUri: MapboxStyles.OUTDOORS,
               onMapCreated: _onMapCreated,
               onMapIdleListener: _onMapIdle,
