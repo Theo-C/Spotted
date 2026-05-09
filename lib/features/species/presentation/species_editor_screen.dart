@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -206,6 +207,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               hint: 'Ex : Buse variable',
               autofocus: !_isEditing,
               textInputAction: TextInputAction.next,
+              readOnly: _isEditing,
             ),
             const SizedBox(height: 16),
             const _Label('Nom scientifique'),
@@ -215,12 +217,12 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               hint: 'Ex : Buteo buteo',
               italic: true,
               textInputAction: TextInputAction.next,
-              readOnly: _isEditing, // immuable une fois créé (unique constraint)
+              readOnly: _isEditing,
             ),
             if (_isEditing) ...[
               const SizedBox(height: 4),
               Text(
-                'Le nom scientifique ne peut pas être modifié.',
+                'Les noms ne peuvent pas être modifiés en édition. Tu peux ajuster catégorie, rareté et description.',
                 style: GoogleFonts.karla(
                   fontSize: 11,
                   fontStyle: FontStyle.italic,
@@ -348,7 +350,12 @@ final _hasObservationsProvider =
       .eq('species_id', speciesId)
       .eq('zone_id', oise.id)
       .limit(1);
-  return (rows as List).isNotEmpty;
+  final has = (rows as List).isNotEmpty;
+  debugPrint(
+    '[species-editor] hasObservations(speciesId=$speciesId, zoneId=${oise.id}) = $has '
+    '(rowsCount=${(rows).length})',
+  );
+  return has;
 });
 
 class _Label extends StatelessWidget {

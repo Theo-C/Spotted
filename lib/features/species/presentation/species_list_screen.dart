@@ -78,11 +78,20 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
                 child: categoryAsync.when(
                   loading: () => const SizedBox(height: 60),
                   error: (e, _) => const SizedBox.shrink(),
-                  data: (category) => _CategoryHeader(
+                  data: (category) {
+                  final speciesInCategory =
+                      speciesAsync.asData?.value ?? const [];
+                  final observedIds =
+                      observedIdsAsync.asData?.value ?? const <String>{};
+                  final observedInCategory = speciesInCategory
+                      .where((s) => observedIds.contains(s.species.id))
+                      .length;
+                  return _CategoryHeader(
                     category: category,
-                    observed: observedIdsAsync.asData?.value.length ?? 0,
-                    total: speciesAsync.asData?.value.length ?? 0,
-                  ),
+                    observed: observedInCategory,
+                    total: speciesInCategory.length,
+                  );
+                },
                 ),
               ),
             ),
