@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -1223,6 +1225,13 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
               styleUri: MapboxStyles.OUTDOORS,
               onMapCreated: _onMapCreated,
               onMapIdleListener: _onMapIdle,
+              // Absorbe pan vertical + pinch sans laisser le SingleChildScrollView
+              // parent les capturer (sinon on ne peut que paner vers le bas).
+              gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                Factory<OneSequenceGestureRecognizer>(
+                  EagerGestureRecognizer.new,
+                ),
+              },
             ),
             // Marker fixe (overlay Flutter), légèrement au-dessus du centre
             // pour que la pointe touche le centre de la carte.
