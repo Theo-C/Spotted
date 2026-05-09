@@ -40,6 +40,103 @@ class HomeScreen extends ConsumerWidget {
   }
 }
 
+/// Menu d'ajout (bottom sheet) au tap du bouton + sur la home.
+Future<void> _showAddMenu(BuildContext context) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: surfaceBase,
+    useRootNavigator: false,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8E0CE),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _AddMenuTile(
+              icon: Icons.add_a_photo_outlined,
+              label: 'Nouvelle observation',
+              subtitle: 'Saisis une obs depuis une photo',
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                context.push('/observation/new');
+              },
+            ),
+            _AddMenuTile(
+              icon: Icons.pets,
+              label: 'Nouvelle espèce',
+              subtitle: 'Ajoute une espèce au catalogue Oise',
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                context.push('/species/new');
+              },
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _AddMenuTile extends StatelessWidget {
+  const _AddMenuTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: forestGreen.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: forestGreen, size: 22),
+      ),
+      title: Text(
+        label,
+        style: GoogleFonts.cormorantGaramond(
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          color: forestGreen,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: GoogleFonts.karla(
+          fontSize: 12,
+          fontStyle: FontStyle.italic,
+          color: textSecondary,
+        ),
+      ),
+      trailing: const Icon(Icons.chevron_right, color: textSecondary),
+      onTap: onTap,
+    );
+  }
+}
+
 class _Header extends StatelessWidget {
   const _Header();
 
@@ -81,7 +178,7 @@ class _Header extends StatelessWidget {
             elevation: 2,
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: () => context.push('/observation/new'),
+              onTap: () => _showAddMenu(context),
               child: const SizedBox(
                 width: 36,
                 height: 36,

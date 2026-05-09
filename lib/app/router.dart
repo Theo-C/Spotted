@@ -11,6 +11,7 @@ import '../features/observations/presentation/new_observation_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
 import '../features/species/presentation/species_detail_screen.dart';
+import '../features/species/presentation/species_editor_screen.dart';
 import '../features/species/presentation/species_list_screen.dart';
 import '../features/territories/presentation/territory_screen.dart';
 import 'app_shell.dart';
@@ -39,6 +40,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => NewObservationScreen(
           preselectedSpeciesId: state.uri.queryParameters['species'],
         ),
+      ),
+      GoRoute(
+        path: '/species/new',
+        builder: (_, _) => const SpeciesEditorScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
