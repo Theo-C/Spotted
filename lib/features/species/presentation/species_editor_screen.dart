@@ -8,16 +8,22 @@ import '../../../app/theme.dart';
 import '../../../core/utils/category_icons.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
+import '../../../shared/models/species.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
 import '../../territories/data/category_repository.dart';
 import '../../territories/data/territory_progress_provider.dart';
+import '../data/species_detail_provider.dart';
 import '../data/species_repository.dart';
 import '../data/species_with_rarity_provider.dart';
 
-/// Écran de création d'une nouvelle espèce dans le catalogue.
-/// L'édition (mode pré-rempli + cadenas rareté) sera ajoutée Phase 8.C.
+/// Écran d'ajout / édition d'une espèce dans le catalogue.
+/// - [speciesId] null → création
+/// - [speciesId] présent → édition (champs pré-remplis, scientific_name immuable,
+///   rareté Oise verrouillée si l'espèce a déjà des observations validées)
 class SpeciesEditorScreen extends ConsumerStatefulWidget {
-  const SpeciesEditorScreen({super.key});
+  const SpeciesEditorScreen({super.key, this.speciesId});
+
+  final String? speciesId;
 
   @override
   ConsumerState<SpeciesEditorScreen> createState() =>
@@ -31,7 +37,10 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
   String? _selectedCategoryId;
   Rarity _selectedRarity = Rarity.common;
   bool _submitting = false;
+  bool _initialized = false;
   String? _error;
+
+  bool get _isEditing => widget.speciesId != null;
 
   @override
   void dispose() {
@@ -41,7 +50,26 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  Future<void> _initFromExisting() async {
+    if (_initialized || widget.speciesId == null) return;
+    _initialized = true;
+    final oise = await ref.read(oiseZoneProvider.future);
+    final detail = await ref.read(
+      speciesDetailProvider(
+        (zoneId: oise.id, speciesId: widget.speciesId!),
+      ).future,
+    );
+    if (!mounted) return;
+    setState(() {
+      _commonName.text = detail.species.commonName;
+      _scientificName.text = detail.species.scientificName;
+      _description.text = detail.species.description ?? '';
+      _selectedCategoryId = detail.species.categoryId;
+      _selectedRarity = detail.rarity;
+    });
+  }
+
+  Future<void> _submit({required bool rarityLocked}) async {
     final cn = _commonName.text.trim();
     final sn = _scientificName.text.trim();
     if (cn.isEmpty || sn.isEmpty) {
@@ -58,29 +86,67 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
     });
     try {
       final oise = await ref.read(oiseZoneProvider.future);
-      final created = await ref.read(speciesRepositoryProvider).create(
-            commonName: cn,
-            scientificName: sn,
-            categoryId: _selectedCategoryId!,
-            description: _description.text.trim().isEmpty
-                ? null
-                : _description.text.trim(),
-          );
-      await ref.read(supabaseClientProvider).from('species_zones').insert({
-        'species_id': created.id,
-        'zone_id': oise.id,
-        'rarity': _selectedRarity.name,
-      });
+      final client = ref.read(supabaseClientProvider);
+      final desc =
+          _description.text.trim().isEmpty ? null : _description.text.trim();
 
-      // Invalide les providers qui consomment la liste des espèces.
+      String speciesId;
+      if (_isEditing) {
+        // UPDATE de l'espèce existante.
+        final original = await ref
+            .read(speciesRepositoryProvider)
+            .getById(widget.speciesId!);
+        final updated = await ref.read(speciesRepositoryProvider).update(
+              Species(
+                id: original.id,
+                commonName: cn,
+                scientificName: sn,
+                categoryId: _selectedCategoryId!,
+                description: desc,
+                photoUrl: original.photoUrl,
+                createdByUserId: original.createdByUserId,
+                createdAt: original.createdAt,
+              ),
+            );
+        speciesId = updated.id;
+        if (!rarityLocked) {
+          await client
+              .from('species_zones')
+              .update({'rarity': _selectedRarity.name})
+              .eq('species_id', speciesId)
+              .eq('zone_id', oise.id);
+        }
+      } else {
+        // CREATE
+        final created = await ref.read(speciesRepositoryProvider).create(
+              commonName: cn,
+              scientificName: sn,
+              categoryId: _selectedCategoryId!,
+              description: desc,
+            );
+        speciesId = created.id;
+        await client.from('species_zones').insert({
+          'species_id': speciesId,
+          'zone_id': oise.id,
+          'rarity': _selectedRarity.name,
+        });
+      }
+
+      // Invalide les caches qui dépendent du catalogue.
       ref.invalidate(speciesByCategoryInZoneProvider);
       ref.invalidate(categoriesWithProgressProvider);
+      if (_isEditing) {
+        ref.invalidate(speciesDetailProvider);
+      }
 
       if (mounted) {
-        // Redirige sur la fiche de l'espèce nouvellement créée.
-        context.go(
-          '/territory/${oise.id}/category/${_selectedCategoryId!}/species/${created.id}',
-        );
+        if (_isEditing) {
+          context.pop();
+        } else {
+          context.go(
+            '/territory/${oise.id}/category/${_selectedCategoryId!}/species/$speciesId',
+          );
+        }
       }
     } on PostgrestException catch (e) {
       if (mounted) {
@@ -102,10 +168,21 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
   @override
   Widget build(BuildContext context) {
     final categoriesAsync = ref.watch(_categoriesProvider);
+    final hasObsAsync = _isEditing
+        ? ref.watch(_hasObservationsProvider(widget.speciesId!))
+        : const AsyncValue<bool>.data(false);
+
+    // Mode édition : pré-rempli au premier build.
+    if (_isEditing && !_initialized) {
+      _initFromExisting();
+    }
+
+    final rarityLocked = hasObsAsync.asData?.value ?? false;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Nouvelle espèce',
+          _isEditing ? "Modifier l'espèce" : 'Nouvelle espèce',
           style: GoogleFonts.cormorantGaramond(
             fontSize: 22,
             fontWeight: FontWeight.w600,
@@ -127,7 +204,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
             _TextInput(
               controller: _commonName,
               hint: 'Ex : Buse variable',
-              autofocus: true,
+              autofocus: !_isEditing,
               textInputAction: TextInputAction.next,
             ),
             const SizedBox(height: 16),
@@ -138,7 +215,19 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               hint: 'Ex : Buteo buteo',
               italic: true,
               textInputAction: TextInputAction.next,
+              readOnly: _isEditing, // immuable une fois créé (unique constraint)
             ),
+            if (_isEditing) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Le nom scientifique ne peut pas être modifié.',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: textMuted,
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             const _Label('Catégorie'),
             const SizedBox(height: 6),
@@ -155,12 +244,35 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            const _Label('Rareté dans l\'Oise'),
+            Row(
+              children: [
+                const _Label('Rareté dans l\'Oise'),
+                if (rarityLocked) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.lock_outline,
+                      size: 12, color: terracotta),
+                ],
+              ],
+            ),
             const SizedBox(height: 6),
             _RarityPicker(
               selected: _selectedRarity,
-              onChanged: (r) => setState(() => _selectedRarity = r),
+              locked: rarityLocked,
+              onChanged: rarityLocked
+                  ? null
+                  : (r) => setState(() => _selectedRarity = r),
             ),
+            if (rarityLocked) ...[
+              const SizedBox(height: 4),
+              Text(
+                "Rareté verrouillée — l'espèce a déjà été observée sur ce territoire.",
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: textMuted,
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             const _Label('Description (optionnelle)'),
             const SizedBox(height: 6),
@@ -182,7 +294,9 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
             ],
             const SizedBox(height: 32),
             FilledButton(
-              onPressed: _submitting ? null : _submit,
+              onPressed: _submitting
+                  ? null
+                  : () => _submit(rarityLocked: rarityLocked),
               style: FilledButton.styleFrom(
                 backgroundColor: forestGreen,
                 foregroundColor: surfaceBase,
@@ -201,7 +315,9 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
                       ),
                     )
                   : Text(
-                      'AJOUTER AU CATALOGUE',
+                      _isEditing
+                          ? 'METTRE À JOUR'
+                          : 'AJOUTER AU CATALOGUE',
                       style: GoogleFonts.karla(
                         fontSize: 13,
                         letterSpacing: 2,
@@ -218,6 +334,21 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
 
 final _categoriesProvider = FutureProvider<List<model.Category>>((ref) async {
   return ref.watch(categoryRepositoryProvider).getAll();
+});
+
+/// True s'il y a au moins une observation pour cette espèce dans Oise.
+/// Sert à verrouiller la rareté en mode édition (CDC §règles métier).
+final _hasObservationsProvider =
+    FutureProvider.family<bool, String>((ref, speciesId) async {
+  final oise = await ref.watch(oiseZoneProvider.future);
+  final client = ref.watch(supabaseClientProvider);
+  final rows = await client
+      .from('observations')
+      .select('id')
+      .eq('species_id', speciesId)
+      .eq('zone_id', oise.id)
+      .limit(1);
+  return (rows as List).isNotEmpty;
 });
 
 class _Label extends StatelessWidget {
@@ -246,6 +377,7 @@ class _TextInput extends StatelessWidget {
     this.maxLines = 1,
     this.autofocus = false,
     this.textInputAction,
+    this.readOnly = false,
   });
 
   final TextEditingController controller;
@@ -254,12 +386,13 @@ class _TextInput extends StatelessWidget {
   final int maxLines;
   final bool autofocus;
   final TextInputAction? textInputAction;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: surfaceCard,
+        color: readOnly ? surfaceMuted : surfaceCard,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
       ),
@@ -267,11 +400,12 @@ class _TextInput extends StatelessWidget {
       child: TextField(
         controller: controller,
         autofocus: autofocus,
+        readOnly: readOnly,
         textInputAction: textInputAction,
         maxLines: maxLines,
         style: GoogleFonts.cormorantGaramond(
           fontSize: 16,
-          color: textPrimary,
+          color: readOnly ? textSecondary : textPrimary,
           fontStyle: italic ? FontStyle.italic : FontStyle.normal,
         ),
         cursorColor: forestGreen,
@@ -352,48 +486,56 @@ class _CategoryPicker extends StatelessWidget {
 }
 
 class _RarityPicker extends StatelessWidget {
-  const _RarityPicker({required this.selected, required this.onChanged});
+  const _RarityPicker({
+    required this.selected,
+    required this.onChanged,
+    this.locked = false,
+  });
 
   final Rarity selected;
-  final ValueChanged<Rarity> onChanged;
+  final ValueChanged<Rarity>? onChanged;
+  final bool locked;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        for (final r in Rarity.values) ...[
-          Expanded(
-            child: GestureDetector(
-              onTap: () => onChanged(r),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: selected == r
-                      ? _color(r)
-                      : _color(r).withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: _color(r),
-                    width: selected == r ? 1.8 : 1.2,
+    return Opacity(
+      opacity: locked ? 0.6 : 1,
+      child: Row(
+        children: [
+          for (final r in Rarity.values) ...[
+            Expanded(
+              child: GestureDetector(
+                onTap: onChanged == null ? null : () => onChanged!(r),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: selected == r
+                        ? _color(r)
+                        : _color(r).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _color(r),
+                      width: selected == r ? 1.8 : 1.2,
+                    ),
                   ),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  _label(r).toUpperCase(),
-                  style: GoogleFonts.karla(
-                    fontSize: 9,
-                    letterSpacing: 1.2,
-                    fontWeight: FontWeight.bold,
-                    color: selected == r ? surfaceBase : _color(r),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _label(r).toUpperCase(),
+                    style: GoogleFonts.karla(
+                      fontSize: 9,
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.bold,
+                      color: selected == r ? surfaceBase : _color(r),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          if (r != Rarity.values.last) const SizedBox(width: 6),
+            if (r != Rarity.values.last) const SizedBox(width: 6),
+          ],
         ],
-      ],
+      ),
     );
   }
 

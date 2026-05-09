@@ -86,6 +86,7 @@ class _DetailBody extends StatelessWidget {
             rarity: detail.rarity,
             iconKey: categoryIconKey,
             isObserved: isObserved,
+            speciesId: detail.species.id,
           ),
         ),
         SliverToBoxAdapter(
@@ -180,11 +181,13 @@ class _Hero extends StatelessWidget {
     required this.rarity,
     required this.iconKey,
     required this.isObserved,
+    required this.speciesId,
   });
 
   final Rarity rarity;
   final String iconKey;
   final bool isObserved;
+  final String speciesId;
 
   @override
   Widget build(BuildContext context) {
@@ -242,12 +245,21 @@ class _Hero extends StatelessWidget {
               ),
             ),
           ),
-          // Rarity badge
+          // Rarity badge + edit button
           Positioned(
             top: 16,
             right: 16,
             child: SafeArea(
-              child: _RarityBadge(rarity: rarity),
+              child: Row(
+                children: [
+                  _CircleButton(
+                    icon: Icons.edit_outlined,
+                    onTap: () => context.push('/species/$speciesId/edit'),
+                  ),
+                  const SizedBox(width: 8),
+                  _RarityBadge(rarity: rarity),
+                ],
+              ),
             ),
           ),
           // "À débusquer"

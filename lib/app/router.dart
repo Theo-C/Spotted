@@ -45,6 +45,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/species/new',
         builder: (_, _) => const SpeciesEditorScreen(),
       ),
+      GoRoute(
+        path: '/species/:sid/edit',
+        builder: (_, state) => SpeciesEditorScreen(
+          speciesId: state.pathParameters['sid']!,
+        ),
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
             AppShell(navigationShell: navigationShell),
