@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/theme.dart';
@@ -375,7 +376,18 @@ class _NewObservationScreenState
               onTap: _pickDate,
             ),
             const SizedBox(height: 16),
-            const _Label('Coordonnées'),
+            const _Label('Position'),
+            const SizedBox(height: 6),
+            _MiniMapPicker(
+              lat: _lat ?? 49.41,
+              lng: _lng ?? 2.82,
+              onPositionChanged: (pos) {
+                setState(() {
+                  _lat = pos.lat;
+                  _lng = pos.lng;
+                });
+              },
+            ),
             const SizedBox(height: 6),
             _CoordsField(lat: _lat, lng: _lng),
             if (_lat != null && _lng != null) ...[
@@ -1160,6 +1172,106 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
 final _categoriesProvider = FutureProvider<List<model.Category>>((ref) async {
   return ref.watch(categoryRepositoryProvider).getAll();
 });
+
+/// Mini-carte Mapbox dans le form. Le marker terracotta est fixé visuellement
+/// au centre de la carte (overlay Flutter, pas un marker Mapbox). Au drag, la
+/// carte bouge sous le marker — quand elle s'immobilise, on lit la nouvelle
+/// position du centre via [getCameraState].
+class _MiniMapPicker extends StatefulWidget {
+  const _MiniMapPicker({
+    required this.lat,
+    required this.lng,
+    required this.onPositionChanged,
+  });
+
+  final double lat;
+  final double lng;
+  final ValueChanged<({double lat, double lng})> onPositionChanged;
+
+  @override
+  State<_MiniMapPicker> createState() => _MiniMapPickerState();
+}
+
+class _MiniMapPickerState extends State<_MiniMapPicker> {
+  MapboxMap? _map;
+
+  Future<void> _onMapCreated(MapboxMap map) async {
+    _map = map;
+  }
+
+  Future<void> _onMapIdle(MapIdleEventData _) async {
+    final map = _map;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    final pos = state.center.coordinates;
+    widget.onPositionChanged((lat: pos.lat.toDouble(), lng: pos.lng.toDouble()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: 200,
+        child: Stack(
+          children: [
+            MapWidget(
+              cameraOptions: CameraOptions(
+                center: Point(coordinates: Position(widget.lng, widget.lat)),
+                zoom: 11,
+              ),
+              styleUri: MapboxStyles.OUTDOORS,
+              onMapCreated: _onMapCreated,
+              onMapIdleListener: _onMapIdle,
+            ),
+            // Marker fixe (overlay Flutter), légèrement au-dessus du centre
+            // pour que la pointe touche le centre de la carte.
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.only(bottom: 24),
+                child: Icon(
+                  Icons.place,
+                  color: terracotta,
+                  size: 36,
+                  shadows: [
+                    Shadow(
+                      color: Color(0x66000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Petit hint en bas
+            Positioned(
+              bottom: 6,
+              left: 6,
+              right: 6,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: surfaceBase.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Glisse la carte pour ajuster',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.karla(
+                    fontSize: 10,
+                    fontStyle: FontStyle.italic,
+                    color: textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _PlaceDisplay extends ConsumerWidget {
   const _PlaceDisplay({required this.lat, required this.lng});
