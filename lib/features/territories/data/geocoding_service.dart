@@ -33,73 +33,59 @@ class GeocodingService {
 
   final Dio _dio;
 
-  /// Reverse-geocode lat/lng → commune + département via Mapbox Places API.
-  /// Renvoie null en cas d'erreur réseau ou si pas de résultats.
+  /// Reverse-geocode lat/lng → commune + département via Mapbox Geocoding API v6.
   ///
-  /// Note implémentation : on ne filtre PAS sur `types=place,region,country`
-  /// dans la query car Mapbox peut renvoyer des `place_type` différents selon
-  /// les pays (ex: `district` en France pour le département). On récupère
-  /// tout, on parse côté client.
+  /// On utilise v6 (et pas v5 legacy qui retourne du 422 selon les paramètres).
+  /// En v6, le 1er feature renvoie `properties.context` qui contient tous les
+  /// niveaux administratifs d'un coup — pas besoin de boucler sur plusieurs.
+  ///
+  /// Doc : https://docs.mapbox.com/api/search/geocoding-v6/
   Future<GeocodingResult?> reverseGeocode({
     required double lat,
     required double lng,
   }) async {
     try {
-      // Mapbox reverse geocoding refuse limit > 1 sans `types`. On précise
-      // donc tous les types qu'on consomme (country, region, district, place,
-      // locality, postcode) et limit = nb de types.
-      const types = 'country,region,district,place,locality,postcode';
       final response = await _dio.get<Map<String, dynamic>>(
-        'https://api.mapbox.com/geocoding/v5/mapbox.places/$lng,$lat.json',
+        'https://api.mapbox.com/search/geocode/v6/reverse',
         queryParameters: {
+          'longitude': lng,
+          'latitude': lat,
           'access_token': Env.mapboxAccessToken,
           'language': 'fr',
-          'types': types,
-          'limit': 6,
+          'limit': 1,
         },
       );
       final features = response.data?['features'] as List?;
-      if (features == null) {
+      if (features == null || features.isEmpty) {
         debugPrint(
-          '[geocoding] response has no features. Status=${response.statusCode}',
+          '[geocoding] no features. Status=${response.statusCode}',
         );
         return null;
       }
+      final feature = features.first as Map<String, dynamic>;
+      final props = feature['properties'] as Map<String, dynamic>?;
+      final ctx = props?['context'] as Map<String, dynamic>?;
 
-      String? place;
-      String? region;
-      String? country;
-      // On dump le pretty-print des place_types présents pour debug.
-      final summary = <String>[];
-      for (final f in features) {
-        final m = f as Map<String, dynamic>;
-        final placeType = (m['place_type'] as List?)?.cast<String>() ?? [];
-        final text = (m['text_fr'] as String?) ?? (m['text'] as String?);
-        summary.add('${placeType.join("|")}=$text');
-        if (text == null) continue;
-        // Place / commune
-        if ((placeType.contains('place') || placeType.contains('locality')) &&
-            place == null) {
-          place = text;
-        }
-        // Région / département : selon Mapbox, le département français peut
-        // arriver soit en `region` soit en `district`. On essaie les deux.
-        if ((placeType.contains('district') ||
-                placeType.contains('region')) &&
-            region == null) {
-          region = text;
-        }
-        if (placeType.contains('country') && country == null) {
-          country = text;
-        }
+      String? nameOf(String key) {
+        final entry = ctx?[key] as Map<String, dynamic>?;
+        return entry?['name'] as String?;
       }
+
+      // Place / commune : on essaie place puis locality.
+      final place = nameOf('place') ?? nameOf('locality');
+      // Région / département : Mapbox renvoie le département français dans
+      // `region` (ex: "Oise"), la région administrative dans `region` aussi
+      // selon les pays. district = niveau intermédiaire. On essaie les deux.
+      final region = nameOf('region') ?? nameOf('district');
+      final country = nameOf('country');
+
       debugPrint(
-        '[geocoding] ($lat,$lng) → features: ${summary.join(", ")} | parsed: place=$place region=$region country=$country',
+        '[geocoding] ($lat,$lng) → place=$place region=$region country=$country (raw context keys: ${ctx?.keys.join(",")})',
       );
       return GeocodingResult(place: place, region: region, country: country);
     } on DioException catch (e) {
       debugPrint(
-        '[geocoding] network error: ${e.message} (status=${e.response?.statusCode})',
+        '[geocoding] network error: ${e.message} (status=${e.response?.statusCode}) body=${e.response?.data}',
       );
       return null;
     } catch (e) {
