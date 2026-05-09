@@ -25,6 +25,7 @@ import '../../territories/data/category_repository.dart';
 import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/territory_progress_provider.dart';
 import '../data/observation_repository.dart';
+import '../data/observations_for_map_provider.dart';
 import '../data/observed_species_provider.dart';
 import '../data/photo_picker_service.dart';
 import '../data/photo_upload_service.dart';
@@ -275,6 +276,7 @@ class _NewObservationScreenState
       ref.invalidate(observedSpeciesIdsInZoneProvider);
       ref.invalidate(categoriesWithProgressProvider);
       ref.invalidate(oiseProgressProvider);
+      ref.invalidate(allObservationsForMapProvider);
       ref.invalidate(accountTotalPointsProvider);
       ref.invalidate(accountLevelProvider);
 
