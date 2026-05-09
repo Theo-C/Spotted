@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/services/location_service.dart';
 import '../../../core/utils/category_icons.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
@@ -20,6 +21,7 @@ class JournalScreen extends ConsumerStatefulWidget {
 }
 
 class _JournalScreenState extends ConsumerState<JournalScreen> {
+  MapboxMap? _map;
   CircleAnnotationManager? _circleManager;
 
   /// Mapping annotation ID → observation, pour résoudre le tap.
@@ -31,14 +33,44 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   String? _observerFilter; // user.id
 
   Future<void> _onMapCreated(MapboxMap map) async {
+    _map = map;
     _circleManager = await map.annotations.createCircleAnnotationManager();
     _circleManager!.tapEvents(onTap: _handleAnnotationTap);
-    // Échelle déplacée en bas à droite — par défaut top-left, masquée par
-    // notre barre de filtres. Logo + attribution Mapbox restent bottom-left.
+    // Scale bar masquée — peu utile au quotidien, encombre l'UI.
     await map.scaleBar.updateSettings(
-      ScaleBarSettings(position: OrnamentPosition.BOTTOM_RIGHT),
+      ScaleBarSettings(enabled: false),
     );
     await _renderAnnotations();
+  }
+
+  Future<void> _centerOnUser() async {
+    final result =
+        await ref.read(locationServiceProvider).getCurrentPosition();
+    if (!mounted) return;
+    switch (result) {
+      case LocationSuccess(:final lat, :final lng):
+        await _map?.flyTo(
+          CameraOptions(
+            center: Point(coordinates: Position(lng, lat)),
+            zoom: 13,
+          ),
+          MapAnimationOptions(duration: 800),
+        );
+      case LocationServiceDisabled():
+        _snackbar('Active la localisation dans tes réglages système.');
+      case LocationDenied():
+        _snackbar('Permission refusée.');
+      case LocationDeniedForever():
+        _snackbar(
+          'Permission refusée. Active-la dans Réglages → Apps → Spotted → Autorisations.',
+        );
+      case LocationError(:final message):
+        _snackbar('Erreur de localisation : $message');
+    }
+  }
+
+  void _snackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// Recharge tous les markers depuis le provider, en appliquant les filtres.
@@ -168,7 +200,36 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
               onObserverChanged: _setObserverFilter,
             ),
           ),
+          Positioned(
+            right: 16,
+            bottom: 24,
+            child: _MyLocationButton(onTap: _centerOnUser),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _MyLocationButton extends StatelessWidget {
+  const _MyLocationButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: surfaceBase,
+      shape: const CircleBorder(),
+      elevation: 4,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: const SizedBox(
+          width: 48,
+          height: 48,
+          child: Icon(Icons.my_location, color: forestGreen, size: 22),
+        ),
       ),
     );
   }

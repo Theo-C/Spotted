@@ -12,6 +12,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/services/location_service.dart';
 import '../../../shared/models/app_user.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
@@ -1229,22 +1230,19 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
     _map = map;
   }
 
-  @override
-  void didUpdateWidget(_MiniMapPicker oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Quand le parent change lat/lng (typiquement au retour du fullscreen
-    // picker), on recentre la map programmatiquement — sinon le MapWidget
-    // ignore les nouvelles cameraOptions après son init.
-    if ((oldWidget.lat != widget.lat || oldWidget.lng != widget.lng) &&
-        _map != null) {
-      _map!.flyTo(
-        CameraOptions(
-          center: Point(coordinates: Position(widget.lng, widget.lat)),
-          zoom: 11,
-        ),
-        MapAnimationOptions(duration: 600),
-      );
-    }
+  // didUpdateWidget retiré : provoquait un flyTo à chaque pan/zoom (round-trip
+  // _onMapIdle → setState parent → rebuild → didUpdateWidget → flyTo qui
+  // réinitialisait le zoom). Le recentrage explicite (retour fullscreen,
+  // bouton "ma position") est désormais fait directement via _flyTo().
+
+  Future<void> _flyTo({required double lat, required double lng}) async {
+    await _map?.flyTo(
+      CameraOptions(
+        center: Point(coordinates: Position(lng, lat)),
+        zoom: 13,
+      ),
+      MapAnimationOptions(duration: 600),
+    );
   }
 
   Future<void> _onMapIdle(MapIdleEventData _) async {
@@ -1267,7 +1265,36 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
     );
     if (result != null) {
       widget.onPositionChanged(result);
+      await _flyTo(lat: result.lat, lng: result.lng);
     }
+  }
+
+  Future<void> _centerOnUser() async {
+    final result =
+        await ProviderScope.containerOf(context, listen: false)
+            .read(locationServiceProvider)
+            .getCurrentPosition();
+    if (!mounted) return;
+    switch (result) {
+      case LocationSuccess(:final lat, :final lng):
+        widget.onPositionChanged((lat: lat, lng: lng));
+        await _flyTo(lat: lat, lng: lng);
+      case LocationServiceDisabled():
+        _snackbar('Active la localisation dans tes réglages système.');
+      case LocationDenied():
+        _snackbar('Permission refusée.');
+      case LocationDeniedForever():
+        _snackbar(
+          'Permission refusée. Active-la dans Réglages → Apps → Spotted.',
+        );
+      case LocationError(:final message):
+        _snackbar('Erreur de localisation : $message');
+    }
+  }
+
+  void _snackbar(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -1324,10 +1351,33 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
                 ),
               ),
             ),
+            // Bouton "ma position", bottom-right
             Positioned(
               bottom: 6,
+              right: 6,
+              child: Material(
+                color: surfaceBase.withValues(alpha: 0.95),
+                shape: const CircleBorder(),
+                elevation: 2,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _centerOnUser,
+                  child: const SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: Icon(
+                      Icons.my_location,
+                      color: forestGreen,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 12,
               left: 6,
-              right: 44,
+              right: 50,
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

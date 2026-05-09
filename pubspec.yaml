@@ -39,6 +39,9 @@ dependencies:
   # Android redacte les EXIF GPS lors de la copie en cache app.
   permission_handler: ^11.3.1
 
+  # Position courante de l'utilisateur (bouton "ma position" sur les cartes)
+  geolocator: ^13.0.2
+
   # HTTP (pour Mapbox Geocoding API)
   dio: ^5.5.0+1
 

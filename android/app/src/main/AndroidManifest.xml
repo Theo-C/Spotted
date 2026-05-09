@@ -4,6 +4,11 @@
          redactées. -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 
+    <!-- Position de l'utilisateur (bouton "ma position" sur les cartes).
+         FINE = GPS précis, COARSE = fallback Wi-Fi/cell. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <application
         android:label="spotted"
         android:name="${applicationName}"
