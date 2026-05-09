@@ -5,7 +5,11 @@ import 'package:intl/intl.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/utils/category_icons.dart';
+import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
+import '../../../shared/providers/observer_provider.dart';
+import '../../territories/data/category_repository.dart';
 import '../data/observations_for_map_provider.dart';
 
 class JournalScreen extends ConsumerStatefulWidget {
@@ -21,6 +25,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   /// Mapping annotation ID → observation, pour résoudre le tap.
   final Map<String, ObservationOnMap> _byAnnotationId = {};
 
+  // Filtres actifs (null = pas de filtre).
+  String? _categoryFilter; // category.id
+  Rarity? _rarityFilter;
+  String? _observerFilter; // user.id
+
   Future<void> _onMapCreated(MapboxMap map) async {
     _circleManager = await map.annotations.createCircleAnnotationManager();
     _circleManager!
@@ -28,18 +37,20 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     await _renderAnnotations();
   }
 
-  /// Recharge tous les markers depuis le provider. Idempotent — on supprime
-  /// d'abord les annotations existantes pour éviter les doublons.
+  /// Recharge tous les markers depuis le provider, en appliquant les filtres.
+  /// Idempotent — supprime d'abord les annotations existantes.
   Future<void> _renderAnnotations() async {
     final manager = _circleManager;
     if (manager == null) return;
     final asyncItems = ref.read(allObservationsForMapProvider);
-    final items = asyncItems.asData?.value;
-    if (items == null) return;
+    final allItems = asyncItems.asData?.value;
+    if (allItems == null) return;
+
+    final filtered = allItems.where(_matchesFilters).toList();
 
     await manager.deleteAll();
     _byAnnotationId.clear();
-    for (final item in items) {
+    for (final item in filtered) {
       final colorInt = _rarityColorInt(item.rarity);
       final annotation = await manager.create(
         CircleAnnotationOptions(
@@ -49,11 +60,23 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           circleRadius: 8,
           circleColor: colorInt,
           circleStrokeWidth: 2,
-          circleStrokeColor: 0xFFFAF6EC, // surfaceBase
+          circleStrokeColor: 0xFFFAF6EC,
         ),
       );
       _byAnnotationId[annotation.id] = item;
     }
+  }
+
+  bool _matchesFilters(ObservationOnMap item) {
+    if (_categoryFilter != null &&
+        item.species?.categoryId != _categoryFilter) {
+      return false;
+    }
+    if (_rarityFilter != null && item.rarity != _rarityFilter) return false;
+    if (_observerFilter != null && item.obs.userId != _observerFilter) {
+      return false;
+    }
+    return true;
   }
 
   void _handleAnnotationTap(CircleAnnotation annotation) {
@@ -79,11 +102,30 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     };
   }
 
+  void _setCategoryFilter(String? id) {
+    setState(() => _categoryFilter = id);
+    _renderAnnotations();
+  }
+
+  void _setRarityFilter(Rarity? r) {
+    setState(() => _rarityFilter = r);
+    _renderAnnotations();
+  }
+
+  void _setObserverFilter(String? id) {
+    setState(() => _observerFilter = id);
+    _renderAnnotations();
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen(allObservationsForMapProvider, (_, _) {
       _renderAnnotations();
     });
+
+    final allItems =
+        ref.watch(allObservationsForMapProvider).asData?.value ?? const [];
+    final visibleCount = allItems.where(_matchesFilters).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -96,13 +138,32 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           ),
         ),
       ),
-      body: MapWidget(
-        cameraOptions: CameraOptions(
-          center: Point(coordinates: Position(2.82, 49.41)),
-          zoom: 9.0,
-        ),
-        styleUri: MapboxStyles.OUTDOORS,
-        onMapCreated: _onMapCreated,
+      body: Stack(
+        children: [
+          MapWidget(
+            cameraOptions: CameraOptions(
+              center: Point(coordinates: Position(2.82, 49.41)),
+              zoom: 9.0,
+            ),
+            styleUri: MapboxStyles.OUTDOORS,
+            onMapCreated: _onMapCreated,
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _FiltersBar(
+              categoryFilter: _categoryFilter,
+              rarityFilter: _rarityFilter,
+              observerFilter: _observerFilter,
+              visibleCount: visibleCount,
+              totalCount: allItems.length,
+              onCategoryChanged: _setCategoryFilter,
+              onRarityChanged: _setRarityFilter,
+              onObserverChanged: _setObserverFilter,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -115,6 +176,208 @@ class _AnnotationClickListener extends OnCircleAnnotationClickListener {
   @override
   void onCircleAnnotationClick(CircleAnnotation annotation) {
     parent._handleAnnotationTap(annotation);
+  }
+}
+
+class _FiltersBar extends ConsumerWidget {
+  const _FiltersBar({
+    required this.categoryFilter,
+    required this.rarityFilter,
+    required this.observerFilter,
+    required this.visibleCount,
+    required this.totalCount,
+    required this.onCategoryChanged,
+    required this.onRarityChanged,
+    required this.onObserverChanged,
+  });
+
+  final String? categoryFilter;
+  final Rarity? rarityFilter;
+  final String? observerFilter;
+  final int visibleCount;
+  final int totalCount;
+  final ValueChanged<String?> onCategoryChanged;
+  final ValueChanged<Rarity?> onRarityChanged;
+  final ValueChanged<String?> onObserverChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final categoriesAsync = ref.watch(_categoriesProvider);
+    final observersAsync = ref.watch(observersProvider);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: surfaceBase.withValues(alpha: 0.94),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF000000).withValues(alpha: 0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Compteur
+          Row(
+            children: [
+              const Icon(Icons.place_outlined, size: 14, color: terracotta),
+              const SizedBox(width: 4),
+              Text(
+                '$visibleCount / $totalCount obs.',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Catégories
+          categoriesAsync.when(
+            loading: () => const SizedBox(height: 28),
+            error: (_, _) => const SizedBox.shrink(),
+            data: (cats) => _ChipsRow(
+              children: [
+                _FilterChip(
+                  label: 'Toutes',
+                  selected: categoryFilter == null,
+                  onTap: () => onCategoryChanged(null),
+                ),
+                for (final c in cats)
+                  _FilterChip(
+                    label: '${emojiForCategory(c.icon)} ${c.name}',
+                    selected: categoryFilter == c.id,
+                    onTap: () => onCategoryChanged(c.id),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Raretés
+          _ChipsRow(
+            children: [
+              _FilterChip(
+                label: 'Toutes raretés',
+                selected: rarityFilter == null,
+                onTap: () => onRarityChanged(null),
+              ),
+              for (final r in Rarity.values)
+                _FilterChip(
+                  label: _rarityLabel(r),
+                  selected: rarityFilter == r,
+                  color: _rarityColor(r),
+                  onTap: () => onRarityChanged(r),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // Observateurs
+          observersAsync.when(
+            loading: () => const SizedBox(height: 28),
+            error: (_, _) => const SizedBox.shrink(),
+            data: (users) => _ChipsRow(
+              children: [
+                _FilterChip(
+                  label: 'Tous obs.',
+                  selected: observerFilter == null,
+                  onTap: () => onObserverChanged(null),
+                ),
+                for (final u in users)
+                  _FilterChip(
+                    label: u.pseudo,
+                    selected: observerFilter == u.id,
+                    color: Color(
+                      int.parse(u.colorAccent.replaceFirst('#', '0xFF')),
+                    ),
+                    onTap: () => onObserverChanged(u.id),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _rarityLabel(Rarity r) => switch (r) {
+        Rarity.common => 'Commun',
+        Rarity.rare => 'Rare',
+        Rarity.epic => 'Épique',
+        Rarity.legendary => 'Légendaire',
+      };
+
+  static Color _rarityColor(Rarity r) => switch (r) {
+        Rarity.common => rarityCommon,
+        Rarity.rare => rarityRare,
+        Rarity.epic => rarityEpic,
+        Rarity.legendary => rarityLegendary,
+      };
+}
+
+final _categoriesProvider = FutureProvider<List<model.Category>>((ref) async {
+  return ref.watch(categoryRepositoryProvider).getAll();
+});
+
+class _ChipsRow extends StatelessWidget {
+  const _ChipsRow({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 28,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: children.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
+        itemBuilder: (_, i) => children[i],
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.color = forestGreen,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? color : surfaceCard,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? color : color.withValues(alpha: 0.4),
+            width: 1.2,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: GoogleFonts.karla(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: selected ? surfaceBase : color,
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -135,7 +398,6 @@ class _ObservationDetailSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Drag handle
             Center(
               child: Container(
                 width: 40,
@@ -202,8 +464,8 @@ class _ObservationDetailSheet extends StatelessWidget {
                 if (rarity != null)
                   _Chip(
                     icon: Icons.star,
-                    label: _rarityLabel(rarity),
-                    color: _rarityColor(rarity),
+                    label: _ObservationDetailSheet._rarityLabel(rarity),
+                    color: _ObservationDetailSheet._rarityColor(rarity),
                   ),
                 if (item.obs.isFirstForUser)
                   _Chip(
