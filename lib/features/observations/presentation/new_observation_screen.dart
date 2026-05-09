@@ -1226,8 +1226,23 @@ class _MiniMapPicker extends StatefulWidget {
 class _MiniMapPickerState extends State<_MiniMapPicker> {
   MapboxMap? _map;
 
+  // Coords figées au mount — utilisées dans le viewport pour qu'il ne soit
+  // pas re-appliqué à chaque rebuild parent (sinon le zoom user est reset
+  // à chaque pan local, qui déclenche onMapIdle → setState parent → rebuild).
+  // Pour recentrer après ce mount, on appelle _flyTo() explicitement.
+  late final double _initialLat;
+  late final double _initialLng;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialLat = widget.lat;
+    _initialLng = widget.lng;
+  }
+
   Future<void> _onMapCreated(MapboxMap map) async {
     _map = map;
+    await map.scaleBar.updateSettings(ScaleBarSettings(enabled: false));
   }
 
   // didUpdateWidget retiré : provoquait un flyTo à chaque pan/zoom (round-trip
@@ -1307,7 +1322,7 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
           children: [
             MapWidget(
               viewport: CameraViewportState(
-                center: Point(coordinates: Position(widget.lng, widget.lat)),
+                center: Point(coordinates: Position(_initialLng, _initialLat)),
                 zoom: 11,
               ),
               styleUri: MapboxStyles.OUTDOORS,
@@ -1480,11 +1495,15 @@ class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
         children: [
           MapWidget(
             viewport: CameraViewportState(
-              center: Point(coordinates: Position(_lng, _lat)),
+              center:
+                  Point(coordinates: Position(widget.initialLng, widget.initialLat)),
               zoom: 12,
             ),
             styleUri: MapboxStyles.OUTDOORS,
-            onMapCreated: (m) => _map = m,
+            onMapCreated: (m) async {
+              _map = m;
+              await m.scaleBar.updateSettings(ScaleBarSettings(enabled: false));
+            },
             onMapIdleListener: _onMapIdle,
           ),
           const Center(
