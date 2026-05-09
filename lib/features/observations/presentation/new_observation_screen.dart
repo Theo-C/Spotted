@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,13 +10,18 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/theme.dart';
 import '../../../shared/models/app_user.dart';
+import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
 import '../../../shared/models/species.dart';
 import '../../../shared/providers/observer_provider.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/points.dart';
+import '../../species/data/species_identification_service.dart';
 import '../../species/data/species_repository.dart';
+import '../../species/data/species_with_rarity_provider.dart';
+import '../../species/domain/species_identification.dart';
+import '../../territories/data/category_repository.dart';
 import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/territory_progress_provider.dart';
 import '../data/observation_repository.dart';
@@ -44,6 +52,11 @@ class _NewObservationScreenState
   bool _submitting = false;
   String? _error;
 
+  // Identification IA — lancée en arrière-plan au pick photo.
+  SpeciesIdentification? _identification;
+  bool _identifying = false;
+  bool _suggestionDismissed = false;
+
   @override
   void initState() {
     super.initState();
@@ -59,7 +72,58 @@ class _NewObservationScreenState
       if (picked.takenAt != null) _observedAt = picked.takenAt!;
       if (picked.latitude != null) _lat = picked.latitude;
       if (picked.longitude != null) _lng = picked.longitude;
+      _identification = null;
+      _suggestionDismissed = false;
+      // Skip l'IA si l'espèce est déjà verrouillée (depuis "Je l'ai vue !").
+      _identifying = widget.preselectedSpeciesId == null;
     });
+    if (widget.preselectedSpeciesId == null) {
+      unawaited(_runIdentification(picked.file));
+    }
+  }
+
+  Future<void> _runIdentification(File file) async {
+    final result = await ref
+        .read(speciesIdentificationServiceProvider)
+        .identifyFromFile(file);
+    if (!mounted) return;
+    setState(() {
+      _identification = result;
+      _identifying = false;
+    });
+  }
+
+  Future<void> _acceptSuggestion() async {
+    final id = _identification;
+    if (id == null || !id.detected || id.scientificName.isEmpty) return;
+
+    final oise = await ref.read(oiseZoneProvider.future);
+    final allSpecies = await ref.read(_zoneSpeciesProvider(oise.id).future);
+    final scientificLower = id.scientificName.toLowerCase();
+    final match = allSpecies.cast<({Species species, Rarity rarity})?>().firstWhere(
+          (s) =>
+              s!.species.scientificName.toLowerCase() == scientificLower,
+          orElse: () => null,
+        );
+    if (!mounted) return;
+
+    if (match != null) {
+      setState(() => _selectedSpeciesId = match.species.id);
+    } else {
+      // Espèce non curée → dialog d'ajout in-place.
+      final newId = await showDialog<String>(
+        context: context,
+        builder: (_) =>
+            _AddSpeciesDialog(identification: id, zoneId: oise.id),
+      );
+      if (newId != null && mounted) {
+        // Invalide le cache des espèces de la zone pour que la nouvelle apparaisse.
+        ref.invalidate(_zoneSpeciesProvider);
+        ref.invalidate(speciesByCategoryInZoneProvider);
+        ref.invalidate(categoriesWithProgressProvider);
+        setState(() => _selectedSpeciesId = newId);
+      }
+    }
   }
 
   Future<void> _pickDate() async {
@@ -259,6 +323,15 @@ class _NewObservationScreenState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _PhotoSlot(photo: _photo, onTap: _pickPhoto),
+            if (!_suggestionDismissed && (_identifying || _identification != null)) ...[
+              const SizedBox(height: 12),
+              _IaSuggestionCard(
+                identifying: _identifying,
+                identification: _identification,
+                onAccept: _acceptSuggestion,
+                onDismiss: () => setState(() => _suggestionDismissed = true),
+              ),
+            ],
             const SizedBox(height: 20),
             const _Label('Date'),
             const SizedBox(height: 6),
@@ -497,6 +570,507 @@ class _ReadOnlyField extends StatelessWidget {
     );
   }
 }
+
+class _IaSuggestionCard extends StatelessWidget {
+  const _IaSuggestionCard({
+    required this.identifying,
+    required this.identification,
+    required this.onAccept,
+    required this.onDismiss,
+  });
+
+  final bool identifying;
+  final SpeciesIdentification? identification;
+  final VoidCallback onAccept;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    if (identifying) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: surfaceCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 1.8, color: gold),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Identification IA…',
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final id = identification;
+    if (id == null) return const SizedBox.shrink();
+
+    if (!id.detected) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: surfaceMuted,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.search_off, color: textMuted, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                id.rationale.isNotEmpty
+                    ? id.rationale
+                    : "L'IA n'a pas pu identifier l'espèce.",
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 16, color: textMuted),
+              onPressed: onDismiss,
+              tooltip: 'Masquer',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final pct = (id.confidence * 100).round();
+    final lowConfidence = id.confidence < 0.6;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            gold.withValues(alpha: 0.08),
+            gold.withValues(alpha: 0.18),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: gold, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: gold, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                'SUGGESTION IA',
+                style: GoogleFonts.karla(
+                  fontSize: 10,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.bold,
+                  color: gold,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: lowConfidence
+                      ? terracotta.withValues(alpha: 0.15)
+                      : forestGreen.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$pct %',
+                  style: GoogleFonts.karla(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: lowConfidence ? terracotta : forestGreen,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 14, color: textMuted),
+                onPressed: onDismiss,
+                tooltip: 'Masquer',
+                padding: const EdgeInsets.only(left: 6),
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            id.commonName,
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: forestGreen,
+              height: 1.1,
+            ),
+          ),
+          Text(
+            id.scientificName,
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
+              color: terracotta,
+            ),
+          ),
+          if (id.rationale.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              id.rationale,
+              style: GoogleFonts.karla(
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                color: textSecondary,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: onAccept,
+            style: FilledButton.styleFrom(
+              backgroundColor: gold,
+              foregroundColor: forestGreen,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: const Icon(Icons.check, size: 16),
+            label: Text(
+              "UTILISER CETTE SUGGESTION",
+              style: GoogleFonts.karla(
+                fontSize: 11,
+                letterSpacing: 1.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AddSpeciesDialog extends ConsumerStatefulWidget {
+  const _AddSpeciesDialog({required this.identification, required this.zoneId});
+
+  final SpeciesIdentification identification;
+  final String zoneId;
+
+  @override
+  ConsumerState<_AddSpeciesDialog> createState() => _AddSpeciesDialogState();
+}
+
+class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
+  String? _selectedCategoryId;
+  late Rarity _selectedRarity;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedRarity = _rarityFromKey(widget.identification.rarityKey);
+  }
+
+  Rarity _rarityFromKey(String key) {
+    return Rarity.values.firstWhere(
+      (r) => r.name == key,
+      orElse: () => Rarity.common,
+    );
+  }
+
+  Future<void> _submit() async {
+    if (_selectedCategoryId == null) {
+      setState(() => _error = 'Choisis une catégorie.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final id = widget.identification;
+      final created = await ref.read(speciesRepositoryProvider).create(
+            commonName: id.commonName,
+            scientificName: id.scientificName,
+            categoryId: _selectedCategoryId!,
+            description: id.rationale.isEmpty ? null : id.rationale,
+          );
+      // INSERT direct dans species_zones (pas de repo dédié au MVP).
+      await ref.read(supabaseClientProvider).from('species_zones').insert({
+        'species_id': created.id,
+        'zone_id': widget.zoneId,
+        'rarity': _selectedRarity.name,
+      });
+      if (mounted) Navigator.of(context).pop(created.id);
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = 'Erreur BDD : ${e.message}';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = 'Erreur : $e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categoriesAsync = ref.watch(_categoriesProvider);
+    final id = widget.identification;
+    return Dialog(
+      backgroundColor: surfaceBase,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Ajouter cette espèce ?',
+                style: GoogleFonts.cormorantGaramond(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  color: forestGreen,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "Cette espèce n'est pas encore dans la liste de l'Oise.",
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: surfaceCard,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE8E0CE)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      id.commonName,
+                      style: GoogleFonts.cormorantGaramond(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: forestGreen,
+                      ),
+                    ),
+                    Text(
+                      id.scientificName,
+                      style: GoogleFonts.cormorantGaramond(
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                        color: terracotta,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'CATÉGORIE',
+                style: GoogleFonts.karla(
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.bold,
+                  color: textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              categoriesAsync.when(
+                loading: () => const SizedBox(
+                  height: 40,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => Text(
+                  'Erreur : $e',
+                  style: GoogleFonts.karla(color: textMuted),
+                ),
+                data: (categories) {
+                  // Pré-sélectionne la catégorie suggérée par l'IA si elle matche.
+                  _selectedCategoryId ??= categories
+                      .cast<model.Category?>()
+                      .firstWhere(
+                        (c) => c!.icon == id.categoryKey,
+                        orElse: () => null,
+                      )
+                      ?.id;
+                  return DropdownButtonFormField<String>(
+                    initialValue: _selectedCategoryId,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: surfaceCard,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                          color: const Color(0xFFE8E0CE),
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                    items: categories
+                        .map(
+                          (c) => DropdownMenuItem(
+                            value: c.id,
+                            child: Text(c.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) =>
+                        setState(() => _selectedCategoryId = v),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'RARETÉ DANS L\'OISE',
+                style: GoogleFonts.karla(
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.bold,
+                  color: textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<Rarity>(
+                initialValue: _selectedRarity,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: surfaceCard,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(
+                      color: const Color(0xFFE8E0CE),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                items: Rarity.values
+                    .map(
+                      (r) => DropdownMenuItem(
+                        value: r,
+                        child: Text(_rarityLabel(r)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) =>
+                    v != null ? setState(() => _selectedRarity = v) : null,
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: GoogleFonts.karla(
+                    color: const Color(0xFFFF5A5A),
+                    fontSize: 12,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                      child: Text(
+                        'Annuler',
+                        style: GoogleFonts.karla(
+                          fontSize: 13,
+                          color: textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton(
+                      onPressed: _submitting ? null : _submit,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: forestGreen,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: surfaceBase,
+                              ),
+                            )
+                          : Text(
+                              'AJOUTER',
+                              style: GoogleFonts.karla(
+                                fontSize: 12,
+                                letterSpacing: 1.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _rarityLabel(Rarity r) => switch (r) {
+        Rarity.common => 'Commun',
+        Rarity.rare => 'Rare',
+        Rarity.epic => 'Épique',
+        Rarity.legendary => 'Légendaire',
+      };
+}
+
+final _categoriesProvider = FutureProvider<List<model.Category>>((ref) async {
+  return ref.watch(categoryRepositoryProvider).getAll();
+});
 
 class _PlaceDisplay extends ConsumerWidget {
   const _PlaceDisplay({required this.lat, required this.lng});
