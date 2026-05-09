@@ -3,6 +3,8 @@ import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/env.dart';
@@ -10,7 +12,13 @@ import '../domain/species_identification.dart';
 
 /// Identifie une espèce depuis une photo via Claude Vision (Anthropic API).
 ///
-/// Coût indicatif (Haiku 4.5) : ~0.002 $/photo. Quota raisonnable pour 2 users.
+/// Modèle : Sonnet 4.6 avec **extended thinking** (budget 4000 tokens). Le
+/// modèle déroule explicitement la chaîne diagnostique avant de conclure, ce
+/// qui aide beaucoup sur les confusions fines (Grand Corbeau / Corbeau freux,
+/// Buse variable / Bondrée apivore, etc. — cf. system prompt).
+///
+/// Coût indicatif : ~0.015 $/photo (input image + ~4800 tokens output dont
+/// thinking). Pour 2 users à ~10 obs/jour ≈ 10-15 $/mois.
 ///
 /// ⚠️ La clé API est embarquée dans l'APK (`.env` est asset Flutter). Pour un
 /// déploiement public, proxifier via une edge function Supabase.
@@ -19,26 +27,52 @@ class SpeciesIdentificationService {
 
   final Dio _dio;
 
-  static const _model = 'claude-haiku-4-5';
+  static const _model = 'claude-sonnet-4-6';
   static const _endpoint = 'https://api.anthropic.com/v1/messages';
 
+  // Budget de raisonnement avant la réponse finale. 4000 tokens permettent à
+  // Sonnet de dérouler intégralement la chaîne diagnostique (taille →
+  // silhouette → bec → plumage → habitat → élimination → comparaison). Testé
+  // à 2000 : trop court, le modèle se plantait sur des cas qu'il résolvait
+  // bien à 4000. Le coût supplémentaire vaut la précision.
+  static const _thinkingBudgetTokens = 4000;
+
   static const _systemPrompt = '''
-Tu es un expert naturaliste français spécialisé dans la faune sauvage européenne
-(oiseaux, mammifères, reptiles, chiroptères).
+Tu es un expert naturaliste de référence, spécialiste de la faune sauvage à
+l'échelle mondiale (oiseaux, mammifères, reptiles, chiroptères), avec une
+connaissance approfondie de l'Europe, des DOM-TOM français et des
+archipels macaronésiens (Canaries, Açores, Madère).
+
+# Importance du contexte géographique
+
+Si un lieu est précisé dans le message utilisateur (commune, région, pays),
+utilise-le comme **filtre prioritaire** AVANT l'analyse visuelle :
+
+- Privilégie fortement les espèces dont l'aire de répartition couvre le lieu indiqué.
+- Sur une île ou un territoire à fort taux d'endémisme (Canaries, La Réunion,
+  Madagascar, Galapagos, Nouvelle-Calédonie...), donne un poids **majeur** aux
+  espèces endémiques ou caractéristiques du lieu, même si visuellement proches
+  d'espèces continentales.
+- Écarte (ou note avec confiance basse) les espèces clairement hors aire de
+  répartition, sauf si la photo montre des critères diagnostiques sans ambiguïté.
+- Exemple-type : sur l'**île de La Palma (Canaries)**, le seul grand corvidé
+  présent est le **Grand Corbeau (Corvus corax)** — proposer du Corbeau freux
+  ou de la Corneille noire serait incohérent avec la géographie.
 
 # Méthode d'identification
 
-Pour chaque photo, raisonne étape par étape AVANT de conclure :
+Une fois le filtre géographique appliqué, pour chaque photo, raisonne étape par
+étape AVANT de conclure :
 1. **Taille relative** estimée (par rapport à des objets ou autres animaux visibles)
 2. **Silhouette globale** (proportions, attitude, pose)
 3. **Bec / museau / face** (forme, couleur, taille relative)
 4. **Plumage / pelage** (couleurs, motifs, contrastes)
 5. **Queue / arrière-train** (forme, longueur)
 6. **Habitat / contexte** (forêt, eau, ciel, prairie, milieu humain)
-7. Élimine d'abord les espèces clairement incompatibles
+7. Élimine d'abord les espèces clairement incompatibles (visuel + géographie)
 8. Compare les espèces restantes selon leurs **critères diagnostiques**
 
-# Cas de confusion classiques en France (à connaître)
+# Cas de confusion classiques en France métropolitaine (à connaître)
 
 - **Grand Corbeau (Corvus corax)** vs **Corbeau freux (Corvus frugilegus)** vs **Corneille noire (Corvus corone)** :
   - Grand Corbeau : très grand, bec massif, queue **cunéiforme** (forme de losange), faciès uniforme noir, vol planant majestueux
@@ -92,25 +126,33 @@ suivant EXACTEMENT ce schéma :
   /// [curatedSpecies] : liste optionnelle des espèces curées pour le territoire
   /// de la photo. Permet à l'IA de privilégier les espèces déjà connues du
   /// catalogue (gain de précision important — élimine les faux positifs hors
-  /// répartition).
+  /// répartition). Aujourd'hui rempli uniquement quand la photo est dans l'Oise.
   ///
-  /// [regionName] : nom du département/région (ex: "Oise", "Aisne") déduit
-  /// du reverse-geocoding. Donne au modèle un contexte biogéographique.
+  /// [place], [regionName], [country] : tous trois issus du reverse-geocoding
+  /// Mapbox. On les passe au modèle pour qu'il applique un filtre biogéographique
+  /// (cf. system prompt — endémismes, aire de répartition, etc.). Tous optionnels
+  /// car une photo peut être sans GPS.
   ///
   /// Renvoie null en cas d'erreur (réseau, parsing). L'app continue alors
   /// en mode manuel.
   Future<SpeciesIdentification?> identifyFromFile(
     File photo, {
     List<({String commonName, String scientificName})>? curatedSpecies,
+    String? place,
     String? regionName,
+    String? country,
   }) async {
     try {
-      final bytes = await photo.readAsBytes();
+      final bytes = await _compressForVision(photo);
+      if (bytes == null) return null;
       final encoded = base64Encode(bytes);
-      final mediaType = _detectMediaType(photo.path);
+      // Après compression on est toujours en JPEG (cf. _compressForVision).
+      const mediaType = 'image/jpeg';
       final userText = _buildUserPrompt(
         curatedSpecies: curatedSpecies,
+        place: place,
         regionName: regionName,
+        country: country,
       );
 
       final response = await _dio.post<Map<String, dynamic>>(
@@ -121,15 +163,31 @@ suivant EXACTEMENT ce schéma :
             'anthropic-version': '2023-06-01',
             'content-type': 'application/json',
           },
-          // L'API peut prendre 3-10s sur Haiku 4.5 selon la taille image.
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 30),
+          // Sonnet 4.6 + extended thinking : compte 10-25s typiques selon la
+          // taille de l'image et la complexité du raisonnement.
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
         ),
         data: {
           'model': _model,
-          // Plus de tokens pour permettre 3 candidats + rationale détaillée.
-          'max_tokens': 800,
-          'system': _systemPrompt,
+          // max_tokens DOIT être > thinking.budget_tokens. On laisse 1200 tokens
+          // au-dessus du budget pour les blocks "text" (rationale + JSON candidats).
+          'max_tokens': _thinkingBudgetTokens + 1200,
+          'thinking': {
+            'type': 'enabled',
+            'budget_tokens': _thinkingBudgetTokens,
+          },
+          // Format array + cache_control ephemeral : Anthropic met le system
+          // en cache pendant 5 min (TTL). Après le 1er call, ces ~3000 tokens
+          // sont facturés à 10% de leur prix normal — gros gain quand on
+          // identifie plusieurs photos d'affilée.
+          'system': [
+            {
+              'type': 'text',
+              'text': _systemPrompt,
+              'cache_control': {'type': 'ephemeral'},
+            },
+          ],
           'messages': [
             {
               'role': 'user',
@@ -186,16 +244,28 @@ suivant EXACTEMENT ce schéma :
 
   String _buildUserPrompt({
     List<({String commonName, String scientificName})>? curatedSpecies,
+    String? place,
     String? regionName,
+    String? country,
   }) {
     final buf = StringBuffer(
       "Identifie l'espèce sur cette photo en suivant la méthode et le format JSON.",
     );
-    if (regionName != null && regionName.isNotEmpty) {
+
+    final parts = <String>[
+      if (place != null && place.isNotEmpty) place,
+      if (regionName != null && regionName.isNotEmpty) regionName,
+      if (country != null && country.isNotEmpty) country,
+    ];
+    if (parts.isNotEmpty) {
       buf.write(
-        '\n\nContexte : photo prise dans le département **$regionName**, en France métropolitaine.',
+        '\n\n**Contexte géographique** : photo prise à ${parts.join(', ')}. '
+        "Applique le filtre biogéographique (cf. tes consignes système) : "
+        "privilégie les espèces caractéristiques du lieu, pondère les endémismes, "
+        "écarte celles clairement hors aire de répartition.",
       );
     }
+
     if (curatedSpecies != null && curatedSpecies.isNotEmpty) {
       buf.write(
         '\n\nVoici les espèces curées pour ce territoire (sur lesquelles l\'utilisateur a déjà une fiche dans son carnet) :',
@@ -212,12 +282,28 @@ suivant EXACTEMENT ce schéma :
     return buf.toString();
   }
 
-  String _detectMediaType(String path) {
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'image/heic';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    return 'image/jpeg';
+  /// Compresse la photo avant envoi à l'API Vision Anthropic.
+  ///
+  /// Pourquoi : l'API plafonne à 5 MB par image en base64, alors qu'une photo
+  /// moderne fait souvent 8-12 MB. On redimensionne à 1024px max sur le côté
+  /// le plus long (~1.4k tokens d'image — assez de détail pour la diagnose
+  /// ornithologique sans cramer des tokens vu qu'on est facturé sur la
+  /// dimension), et on ré-encode en JPEG quality 85. Résultat typique :
+  /// 200-500 KB. Convertit aussi HEIC → JPEG côté Android/iOS natif, ce qui
+  /// simplifie le media_type côté API.
+  Future<Uint8List?> _compressForVision(File photo) async {
+    try {
+      return await FlutterImageCompress.compressWithFile(
+        photo.absolute.path,
+        minWidth: 1024,
+        minHeight: 1024,
+        quality: 85,
+        format: CompressFormat.jpeg,
+      );
+    } catch (e) {
+      developer.log('Image compression failed: $e', name: 'species_id');
+      return null;
+    }
   }
 
   /// Strip d'éventuels marqueurs markdown ```json ... ``` autour du JSON.

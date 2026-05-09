@@ -7,7 +7,6 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../app/theme.dart';
 import '../../../shared/models/app_user.dart';
 import '../../../shared/models/rarity.dart';
-import '../../../shared/providers/observer_provider.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../gamification/data/gamification_providers.dart';
@@ -22,8 +21,15 @@ class ProfileScreen extends ConsumerWidget {
     final levelAsync = ref.watch(accountLevelProvider);
     final allObsAsync = ref.watch(allObservationsForMapProvider);
     final currentAppUser = ref.watch(currentAppUserProvider).asData?.value;
-    final observersAsync = ref.watch(observersProvider);
-    final currentObserverId = ref.watch(currentObserverIdProvider);
+    final currentAuthUser = ref.watch(currentAuthUserProvider);
+    final myUserId = currentAuthUser?.id;
+    // Stats persos : on filtre les obs partagées sur user_id = soi.
+    // Sans ça, Théo et Axelle verraient les mêmes totaux (cf. bug 2026-05-10).
+    final myObsAsync = allObsAsync.whenData(
+      (items) => myUserId == null
+          ? const <ObservationOnMap>[]
+          : items.where((i) => i.obs.userId == myUserId).toList(),
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -45,20 +51,14 @@ class ProfileScreen extends ConsumerWidget {
               user: currentAppUser,
               levelAsync: levelAsync,
             ),
+            if (currentAuthUser?.email != null) ...[
+              const SizedBox(height: 8),
+              _AuthEmailLine(email: currentAuthUser!.email!),
+            ],
             const SizedBox(height: 20),
             const _SectionLabel('Statistiques'),
             const SizedBox(height: 8),
-            _StatsGrid(allObsAsync: allObsAsync),
-            const SizedBox(height: 24),
-            const _SectionLabel('Qui observe en ce moment ?'),
-            const SizedBox(height: 8),
-            _ObserverToggle(
-              observersAsync: observersAsync,
-              currentObserverId: currentObserverId,
-              onChanged: (id) => ref
-                  .read(currentObserverIdProvider.notifier)
-                  .setObserver(id),
-            ),
+            _StatsGrid(allObsAsync: myObsAsync),
             const SizedBox(height: 32),
             const Divider(color: Color(0xFFE8E0CE)),
             const SizedBox(height: 8),
@@ -455,126 +455,28 @@ class _StatTile extends StatelessWidget {
   }
 }
 
-class _ObserverToggle extends StatelessWidget {
-  const _ObserverToggle({
-    required this.observersAsync,
-    required this.currentObserverId,
-    required this.onChanged,
-  });
+class _AuthEmailLine extends StatelessWidget {
+  const _AuthEmailLine({required this.email});
 
-  final AsyncValue<List<AppUser>> observersAsync;
-  final String? currentObserverId;
-  final ValueChanged<String> onChanged;
+  final String email;
 
   @override
   Widget build(BuildContext context) {
-    return observersAsync.when(
-      loading: () => const SizedBox(height: 80),
-      error: (e, _) => Text(
-        'Observateurs indisponibles',
-        style: GoogleFonts.karla(color: textMuted),
-      ),
-      data: (users) => Row(
-        children: [
-          for (var i = 0; i < users.length; i++) ...[
-            Expanded(
-              child: _ObserverButton(
-                user: users[i],
-                selected: users[i].id == currentObserverId,
-                onTap: () => onChanged(users[i].id),
-              ),
+    return Row(
+      children: [
+        const Icon(Icons.alternate_email, size: 14, color: textSecondary),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            email,
+            style: GoogleFonts.karla(
+              fontSize: 12,
+              color: textSecondary,
             ),
-            if (i != users.length - 1) const SizedBox(width: 10),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ObserverButton extends StatelessWidget {
-  const _ObserverButton({
-    required this.user,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final AppUser user;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Color(int.parse(user.colorAccent.replaceFirst('#', '0xFF')));
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
-        decoration: BoxDecoration(
-          color: selected ? color : surfaceCard,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: selected ? color : color.withValues(alpha: 0.3),
-            width: 2,
+            overflow: TextOverflow.ellipsis,
           ),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.4),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
         ),
-        child: Column(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: selected
-                    ? surfaceBase.withValues(alpha: 0.2)
-                    : color.withValues(alpha: 0.15),
-              ),
-              child: Center(
-                child: Text(
-                  user.pseudo.isNotEmpty ? user.pseudo[0] : '?',
-                  style: GoogleFonts.cormorantGaramond(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: selected ? surfaceBase : color,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              user.pseudo,
-              style: GoogleFonts.karla(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: selected ? surfaceBase : color,
-              ),
-            ),
-            if (selected)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  'OBSERVATEUR ACTUEL',
-                  style: GoogleFonts.karla(
-                    fontSize: 8,
-                    letterSpacing: 1.5,
-                    fontWeight: FontWeight.bold,
-                    color: surfaceBase.withValues(alpha: 0.85),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 }

@@ -1,7 +1,7 @@
 name: spotted
 description: "Spotted — carnet naturaliste personnel (Théo & Axelle)."
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ^3.12.0-327.4.beta
@@ -38,6 +38,10 @@ dependencies:
   # Demande runtime de la permission ACCESS_MEDIA_LOCATION sans laquelle
   # Android redacte les EXIF GPS lors de la copie en cache app.
   permission_handler: ^11.3.1
+
+  # Compression photo avant envoi Vision API (Anthropic plafonne à 5 MB
+  # par image en base64 — les photos modernes font souvent 8-12 MB).
+  flutter_image_compress: ^2.3.0
 
   # Position courante de l'utilisateur (bouton "ma position" sur les cartes)
   geolocator: ^13.0.2

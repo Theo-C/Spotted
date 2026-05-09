@@ -32,6 +32,21 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   Rarity? _rarityFilter;
   String? _observerFilter; // user.id
 
+  // Viewport mémoïsé : à chaque setState (changement de filtre), une nouvelle
+  // instance CameraViewportState() ferait que Mapbox ré-applique le viewport
+  // (par identité d'instance), et reset la caméra sur Compiègne. Memoize pour
+  // que Mapbox ignore les rebuilds. Cf. même bug fix dans new_observation_screen.
+  late final CameraViewportState _initialViewport;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialViewport = CameraViewportState(
+      center: Point(coordinates: Position(2.82, 49.41)),
+      zoom: 9.0,
+    );
+  }
+
   Future<void> _onMapCreated(MapboxMap map) async {
     _map = map;
     _circleManager = await map.annotations.createCircleAnnotationManager();
@@ -178,10 +193,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       body: Stack(
         children: [
           MapWidget(
-            viewport: CameraViewportState(
-              center: Point(coordinates: Position(2.82, 49.41)),
-              zoom: 9.0,
-            ),
+            viewport: _initialViewport,
             styleUri: MapboxStyles.OUTDOORS,
             onMapCreated: _onMapCreated,
           ),

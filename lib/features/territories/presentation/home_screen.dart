@@ -31,9 +31,26 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: 20),
               const _SectionLabel(text: 'Mes terrains'),
               const SizedBox(height: 8),
-              _OiseCard(
-                progressAsync: ref.watch(oiseProgressProvider),
-                zoneAsync: ref.watch(oiseZoneProvider),
+              _TerritoryCard(
+                shortCode: '60',
+                displayName: 'Oise',
+                badge: 'DOMICILE',
+                badgeColor: forestGreen,
+                centerLat: 49.41,
+                centerLng: 2.82,
+                progressAsync: ref.watch(zoneProgressProvider('60')),
+                zoneAsync: ref.watch(zoneByShortCodeProvider('60')),
+              ),
+              const SizedBox(height: 12),
+              _TerritoryCard(
+                shortCode: '02',
+                displayName: 'Aisne',
+                badge: 'VOISIN',
+                badgeColor: terracotta,
+                centerLat: 49.45,
+                centerLng: 3.62,
+                progressAsync: ref.watch(zoneProgressProvider('02')),
+                zoneAsync: ref.watch(zoneByShortCodeProvider('02')),
               ),
               const SizedBox(height: 24),
             ],
@@ -183,7 +200,7 @@ Future<void> _showAddMenu(BuildContext context) async {
             _AddMenuTile(
               icon: Icons.pets,
               label: 'Nouvelle espèce',
-              subtitle: 'Ajoute une espèce au catalogue Oise',
+              subtitle: 'Ajoute une espèce au catalogue',
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 context.push('/species/new');
@@ -466,12 +483,24 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-class _OiseCard extends StatelessWidget {
-  const _OiseCard({
+class _TerritoryCard extends StatelessWidget {
+  const _TerritoryCard({
+    required this.shortCode,
+    required this.displayName,
+    required this.badge,
+    required this.badgeColor,
+    required this.centerLat,
+    required this.centerLng,
     required this.progressAsync,
     required this.zoneAsync,
   });
 
+  final String shortCode;
+  final String displayName;
+  final String badge;
+  final Color badgeColor;
+  final double centerLat;
+  final double centerLng;
   final AsyncValue<TerritoryProgress> progressAsync;
   final AsyncValue<Zone> zoneAsync;
 
@@ -504,9 +533,18 @@ class _OiseCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _OiseMapPlaceholder(),
+                  _TerritoryMap(
+                    centerLat: centerLat,
+                    centerLng: centerLng,
+                    badge: badge,
+                    badgeColor: badgeColor,
+                  ),
                   Container(height: 2, color: const Color(0xFFE8E0CE)),
-                  _OiseInfo(progressAsync: progressAsync),
+                  _TerritoryInfo(
+                    displayName: displayName,
+                    shortCode: shortCode,
+                    progressAsync: progressAsync,
+                  ),
                 ],
               ),
             ),
@@ -517,15 +555,24 @@ class _OiseCard extends StatelessWidget {
   }
 }
 
-class _OiseMapPlaceholder extends StatelessWidget {
-  // Centre approximatif de l'Oise + zoom département.
-  static const _lat = 49.41;
-  static const _lng = 2.82;
+class _TerritoryMap extends StatelessWidget {
+  const _TerritoryMap({
+    required this.centerLat,
+    required this.centerLng,
+    required this.badge,
+    required this.badgeColor,
+  });
+
+  final double centerLat;
+  final double centerLng;
+  final String badge;
+  final Color badgeColor;
+
   static const _zoom = 8;
 
   String get _staticUrl =>
       'https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/'
-      '$_lng,$_lat,$_zoom/600x320@2x'
+      '$centerLng,$centerLat,$_zoom/600x320@2x'
       '?access_token=${Env.mapboxAccessToken}';
 
   @override
@@ -552,7 +599,7 @@ class _OiseMapPlaceholder extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: forestGreen,
+                color: badgeColor,
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
@@ -562,7 +609,7 @@ class _OiseMapPlaceholder extends StatelessWidget {
                 ],
               ),
               child: Text(
-                'DOMICILE',
+                badge,
                 style: GoogleFonts.karla(
                   fontSize: 10,
                   letterSpacing: 1.5,
@@ -602,9 +649,15 @@ class _MapFallback extends StatelessWidget {
   }
 }
 
-class _OiseInfo extends StatelessWidget {
-  const _OiseInfo({required this.progressAsync});
+class _TerritoryInfo extends StatelessWidget {
+  const _TerritoryInfo({
+    required this.displayName,
+    required this.shortCode,
+    required this.progressAsync,
+  });
 
+  final String displayName;
+  final String shortCode;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
@@ -612,7 +665,7 @@ class _OiseInfo extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: progressAsync.when(
-        loading: () => const _OiseInfoSkeleton(),
+        loading: () => const _TerritoryInfoSkeleton(),
         error: (e, _) => Text(
           'Progression indisponible',
           style: GoogleFonts.karla(color: textMuted, fontSize: 13),
@@ -631,9 +684,9 @@ class _OiseInfo extends StatelessWidget {
                         color: forestGreen,
                       ),
                       children: [
-                        const TextSpan(text: 'Oise '),
+                        TextSpan(text: '$displayName '),
                         TextSpan(
-                          text: '(60)',
+                          text: '($shortCode)',
                           style: GoogleFonts.cormorantGaramond(
                             fontSize: 16,
                             fontStyle: FontStyle.italic,
@@ -689,7 +742,7 @@ class _OiseInfo extends StatelessWidget {
             Text(
               p.remaining > 0
                   ? '${p.remaining} espèces encore à découvrir'
-                  : 'Toutes les espèces de l\'Oise observées !',
+                  : 'Toutes les espèces de $displayName observées !',
               style: GoogleFonts.karla(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
@@ -703,8 +756,8 @@ class _OiseInfo extends StatelessWidget {
   }
 }
 
-class _OiseInfoSkeleton extends StatelessWidget {
-  const _OiseInfoSkeleton();
+class _TerritoryInfoSkeleton extends StatelessWidget {
+  const _TerritoryInfoSkeleton();
 
   @override
   Widget build(BuildContext context) {

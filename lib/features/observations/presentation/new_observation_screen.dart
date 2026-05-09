@@ -13,12 +13,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/services/location_service.dart';
-import '../../../shared/models/app_user.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
 import '../../../shared/models/species.dart';
-import '../../../shared/providers/observer_provider.dart';
+import '../../../shared/models/zone.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
+import '../../auth/data/auth_providers.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/points.dart';
 import '../../species/data/species_identification_service.dart';
@@ -28,17 +28,18 @@ import '../../species/domain/species_identification.dart';
 import '../../territories/data/category_repository.dart';
 import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/territory_progress_provider.dart';
+import '../../territories/data/zone_repository.dart';
 import '../data/observation_repository.dart';
 import '../data/observations_for_map_provider.dart';
 import '../data/observed_species_provider.dart';
 import '../data/photo_picker_service.dart';
 import '../data/photo_upload_service.dart';
 
-/// Identification IA désactivée temporairement (Haiku 4.5 pas assez précis sur
-/// la taxonomie ornithologique fine, ex: Grand Corbeau vs Corbeau freux).
-/// À réactiver avec Sonnet 4.6 ou iNaturalist en post-MVP. Le code reste en
-/// place — il suffit de remettre cette constante à true pour réactiver.
-const _iaIdentificationEnabled = false;
+/// Identification IA via Claude Haiku 4.5 + contexte géo enrichi.
+/// Si Haiku rate à nouveau les confusions fines (Grand Corbeau vs Corbeau freux
+/// dans l'Oise, etc.), basculer le modèle dans species_identification_service
+/// vers claude-sonnet-4-6 (~3x plus cher mais nettement plus précis).
+const _iaIdentificationEnabled = true;
 
 /// Écran de saisie d'une nouvelle observation.
 /// Si [preselectedSpeciesId] non nul, l'espèce est verrouillée (cas
@@ -81,8 +82,11 @@ class _NewObservationScreenState
     setState(() {
       _photo = picked;
       if (picked.takenAt != null) _observedAt = picked.takenAt!;
-      if (picked.latitude != null) _lat = picked.latitude;
-      if (picked.longitude != null) _lng = picked.longitude;
+      // Toujours réassigner (même null) : sinon, après un 1er pick avec GPS
+      // suivi d'un pick sans GPS, les coords du 1er pick survivraient et
+      // le geocoding renverrait un faux lieu.
+      _lat = picked.latitude;
+      _lng = picked.longitude;
       _identification = null;
       _suggestionDismissed = false;
       // IA active uniquement si feature flag ON et espèce pas verrouillée.
@@ -96,26 +100,37 @@ class _NewObservationScreenState
 
   Future<void> _runIdentification(File file) async {
     // Contexte conditionnel selon les coords EXIF :
-    //   - photo avec GPS dans Oise  → région + liste curée (gain max précision)
-    //   - photo avec GPS hors Oise  → région seule (pas de liste curée trompeuse)
-    //   - photo sans GPS            → aucun contexte (mieux que des biais faux)
+    //   - photo avec GPS dans une zone curée  → place + region + country + liste curée
+    //   - photo avec GPS hors zone curée      → place + region + country (filtre biogéo IA)
+    //   - photo sans GPS                      → aucun contexte (mieux que des biais faux)
+    String? place;
     String? regionName;
+    String? country;
     List<({String commonName, String scientificName})>? curated;
 
     if (_lat != null && _lng != null) {
       final geocoding = await ref
           .read(geocodingServiceProvider)
           .reverseGeocode(lat: _lat!, lng: _lng!);
+      place = geocoding?.place;
       regionName = geocoding?.region;
-      if (regionName == 'Oise') {
-        final oise = await ref.read(oiseZoneProvider.future);
-        final allSpecies = await ref.read(_zoneSpeciesProvider(oise.id).future);
-        curated = allSpecies
-            .map((s) => (
-                  commonName: s.species.commonName,
-                  scientificName: s.species.scientificName,
-                ))
-            .toList();
+      country = geocoding?.country;
+      if (regionName != null) {
+        final zones = await ref.read(zoneRepositoryProvider).getAll();
+        final detectedZone = zones.cast<Zone?>().firstWhere(
+              (z) => z!.name == regionName,
+              orElse: () => null,
+            );
+        if (detectedZone != null) {
+          final allSpecies =
+              await ref.read(_zoneSpeciesProvider(detectedZone.id).future);
+          curated = allSpecies
+              .map((s) => (
+                    commonName: s.species.commonName,
+                    scientificName: s.species.scientificName,
+                  ))
+              .toList();
+        }
       }
     }
 
@@ -124,7 +139,9 @@ class _NewObservationScreenState
         .identifyFromFile(
           file,
           curatedSpecies: curated,
+          place: place,
           regionName: regionName,
+          country: country,
         );
     if (!mounted) return;
     setState(() {
@@ -193,9 +210,9 @@ class _NewObservationScreenState
       setState(() => _error = 'Choisis une espèce.');
       return;
     }
-    final observerId = ref.read(currentObserverIdProvider);
+    final observerId = ref.read(currentAuthUserProvider)?.id;
     if (observerId == null) {
-      setState(() => _error = 'Pas d\'observateur connecté.');
+      setState(() => _error = 'Pas d\'utilisateur connecté.');
       return;
     }
     setState(() {
@@ -204,13 +221,14 @@ class _NewObservationScreenState
     });
     try {
       final client = ref.read(supabaseClientProvider);
-      final oise = await ref.read(oiseZoneProvider.future);
       final speciesId = _selectedSpeciesId!;
       final lat = _lat ?? 49.41; // centre approximatif Oise (fallback EXIF absent)
       final lng = _lng ?? 2.82;
 
-      // Détection territoire — bloque si la position GPS n'est pas dans Oise.
-      // Photo sans GPS → fallback Oise (l'utilisateur a accepté le défaut).
+      // Détection territoire dynamique : on lookup la zone curée correspondant
+      // au département détecté par geocoding. Bloque si hors France ou région
+      // pas curée. Photo sans GPS → fallback Oise (centre par défaut).
+      Zone detectedZone;
       if (_lat != null && _lng != null) {
         final geocoding = await ref
             .read(geocodingServiceProvider)
@@ -237,32 +255,42 @@ class _NewObservationScreenState
             setState(() {
               _submitting = false;
               _error =
-                  'Cette position est en « $country ». Seule l\'Oise (France) est curée pour le moment.';
+                  'Cette position est en « $country ». Seules les zones France curées sont supportées.';
             });
           }
           return;
         }
 
-        // 3. En France mais hors Oise → bloque.
-        if (region != null && region != 'Oise') {
+        // 3. Lookup zone curée par nom de région.
+        final zones = await ref.read(zoneRepositoryProvider).getAll();
+        final matched = zones.cast<Zone?>().firstWhere(
+              (z) => z!.name == region,
+              orElse: () => null,
+            );
+        if (matched == null) {
           if (mounted) {
             setState(() {
               _submitting = false;
               _error =
-                  'Cette position est en « $region ». Seule l\'Oise est curée. '
-                  'Repositionne le marqueur sur la mini-carte ou choisis une autre photo.';
+                  'Cette position est en « ${region ?? 'région inconnue'} ». '
+                  'Zones curées pour l\'instant : ${zones.map((z) => z.name).join(', ')}. '
+                  'Repositionne le marqueur ou choisis une autre photo.';
             });
           }
           return;
         }
+        detectedZone = matched;
+      } else {
+        // Fallback : pas de GPS, défaut Oise.
+        detectedZone = await ref.read(zoneByShortCodeProvider('60').future);
       }
 
-      // Rareté locale
+      // Rareté locale (de la zone détectée — peut différer entre Oise/Aisne)
       final rarityRow = await client
           .from('species_zones')
           .select('rarity')
           .eq('species_id', speciesId)
-          .eq('zone_id', oise.id)
+          .eq('zone_id', detectedZone.id)
           .single();
       final rarity = Rarity.values
           .firstWhere((r) => r.name == (rarityRow['rarity'] as String));
@@ -295,7 +323,7 @@ class _NewObservationScreenState
       await ref.read(observationRepositoryProvider).create(
             userId: observerId,
             speciesId: speciesId,
-            zoneId: oise.id,
+            zoneId: detectedZone.id,
             observedAt: _observedAt,
             latitude: lat,
             longitude: lng,
@@ -307,7 +335,7 @@ class _NewObservationScreenState
       // Rafraîchit les écrans qui dépendent de la BDD
       ref.invalidate(observedSpeciesIdsInZoneProvider);
       ref.invalidate(categoriesWithProgressProvider);
-      ref.invalidate(oiseProgressProvider);
+      ref.invalidate(zoneProgressProvider);
       ref.invalidate(allObservationsForMapProvider);
       ref.invalidate(accountTotalPointsProvider);
       ref.invalidate(accountLevelProvider);
@@ -365,8 +393,6 @@ class _NewObservationScreenState
     final speciesAsync = _selectedSpeciesId == null
         ? const AsyncValue<Species?>.data(null)
         : ref.watch(_speciesByIdProvider(_selectedSpeciesId!));
-    final observersAsync = ref.watch(observersProvider);
-    final currentObserverId = ref.watch(currentObserverIdProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -436,16 +462,6 @@ class _NewObservationScreenState
               speciesAsync: speciesAsync,
               locked: widget.preselectedSpeciesId != null,
               onTap: widget.preselectedSpeciesId != null ? null : _pickSpecies,
-            ),
-            const SizedBox(height: 16),
-            const _Label('Observateur'),
-            const SizedBox(height: 6),
-            _ObserverToggle(
-              observersAsync: observersAsync,
-              currentId: currentObserverId,
-              onChanged: (id) => ref
-                  .read(currentObserverIdProvider.notifier)
-                  .setObserver(id),
             ),
             if (_error != null) ...[
               const SizedBox(height: 16),
@@ -1283,6 +1299,14 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
   // instance, Mapbox ignore.
   late final CameraViewportState _initialViewport;
 
+  // Dernière position reportée au parent via onPositionChanged. Sert à
+  // distinguer un changement externe (photo avec GPS, retour fullscreen,
+  // bouton ma-position) — pour lequel on doit flyTo — d'un écho de notre
+  // propre pan (parent setState → rebuild) — pour lequel un flyTo
+  // réinitialiserait le zoom.
+  double? _lastReportedLat;
+  double? _lastReportedLng;
+
   @override
   void initState() {
     super.initState();
@@ -1292,15 +1316,27 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
     );
   }
 
+  @override
+  void didUpdateWidget(_MiniMapPicker old) {
+    super.didUpdateWidget(old);
+    final changed = (widget.lat - old.lat).abs() > 1e-9 ||
+        (widget.lng - old.lng).abs() > 1e-9;
+    if (!changed) return;
+    final lr = _lastReportedLat;
+    final lrLng = _lastReportedLng;
+    final isEcho = lr != null &&
+        lrLng != null &&
+        (widget.lat - lr).abs() < 1e-9 &&
+        (widget.lng - lrLng).abs() < 1e-9;
+    if (!isEcho) {
+      _flyTo(lat: widget.lat, lng: widget.lng);
+    }
+  }
+
   Future<void> _onMapCreated(MapboxMap map) async {
     _map = map;
     await map.scaleBar.updateSettings(ScaleBarSettings(enabled: false));
   }
-
-  // didUpdateWidget retiré : provoquait un flyTo à chaque pan/zoom (round-trip
-  // _onMapIdle → setState parent → rebuild → didUpdateWidget → flyTo qui
-  // réinitialisait le zoom). Le recentrage explicite (retour fullscreen,
-  // bouton "ma position") est désormais fait directement via _flyTo().
 
   Future<void> _flyTo({required double lat, required double lng}) async {
     await _map?.flyTo(
@@ -1317,7 +1353,11 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
     if (map == null) return;
     final state = await map.getCameraState();
     final pos = state.center.coordinates;
-    widget.onPositionChanged((lat: pos.lat.toDouble(), lng: pos.lng.toDouble()));
+    final lat = pos.lat.toDouble();
+    final lng = pos.lng.toDouble();
+    _lastReportedLat = lat;
+    _lastReportedLng = lng;
+    widget.onPositionChanged((lat: lat, lng: lng));
   }
 
   Future<void> _openFullscreen() async {
@@ -1728,66 +1768,6 @@ class _SpeciesField extends StatelessWidget {
   }
 }
 
-class _ObserverToggle extends StatelessWidget {
-  const _ObserverToggle({
-    required this.observersAsync,
-    required this.currentId,
-    required this.onChanged,
-  });
-
-  final AsyncValue<List<AppUser>> observersAsync;
-  final String? currentId;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return observersAsync.when(
-      loading: () => const SizedBox(height: 50),
-      error: (e, _) => Text(
-        'Observateurs indisponibles',
-        style: GoogleFonts.karla(color: textMuted),
-      ),
-      data: (users) => Row(
-        children: [
-          for (var i = 0; i < users.length; i++) ...[
-            Expanded(
-              child: GestureDetector(
-                onTap: () => onChanged(users[i].id),
-                child: _observerChip(users[i], users[i].id == currentId),
-              ),
-            ),
-            if (i != users.length - 1) const SizedBox(width: 8),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _observerChip(AppUser u, bool selected) {
-    final color = Color(int.parse(u.colorAccent.replaceFirst('#', '0xFF')));
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: BoxDecoration(
-        color: selected ? color : surfaceCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: selected ? color : const Color(0xFFE8E0CE),
-          width: 2,
-        ),
-      ),
-      child: Center(
-        child: Text(
-          u.pseudo,
-          style: GoogleFonts.karla(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: selected ? surfaceBase : textPrimary,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _SpeciesPickerSheet extends ConsumerStatefulWidget {
   const _SpeciesPickerSheet({required this.zoneId});

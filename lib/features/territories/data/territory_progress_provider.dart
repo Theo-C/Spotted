@@ -3,16 +3,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/models/category.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
+import '../../auth/data/auth_providers.dart';
 import 'category_repository.dart';
 import 'zone_repository.dart';
 
-/// Zone Oise (60) — utilisée comme territoire de référence du MVP.
-/// FutureProvider plutôt qu'une constante car l'UUID est généré par
-/// Supabase (pas connu à la compilation).
-final oiseZoneProvider = FutureProvider<Zone>((ref) async {
+/// Zone par short_code (ex: '60' pour Oise, '02' pour Aisne).
+/// FutureProvider.family plutôt qu'une constante car les UUIDs sont
+/// générés par Supabase (pas connus à la compilation).
+final zoneByShortCodeProvider =
+    FutureProvider.family<Zone, String>((ref, shortCode) async {
   final zones = await ref.watch(zoneRepositoryProvider).getAll();
-  return zones.firstWhere((z) => z.shortCode == '60');
+  return zones.firstWhere((z) => z.shortCode == shortCode);
 });
+
+/// Zone Oise (60) — kept for backward-compat. Prefer zoneByShortCodeProvider.
+final oiseZoneProvider =
+    FutureProvider<Zone>((ref) => ref.watch(zoneByShortCodeProvider('60').future));
 
 /// Progression par catégorie pour une zone donnée.
 class CategoryProgress {
@@ -31,23 +37,30 @@ class CategoryProgress {
 }
 
 /// Liste des catégories enrichies de leur progression sur la zone donnée.
-/// Compte partagé : toutes les obs (les 2 users), pas de filtre par observateur.
+/// Progression individuelle (modèle 2 comptes dissociés depuis 2026-05-10) :
+/// chaque user voit sa propre complétion par catégorie.
 final categoriesWithProgressProvider =
     FutureProvider.family<List<CategoryProgress>, String>((ref, zoneId) async {
+  final userId = ref.watch(currentAuthUserProvider)?.id;
   final client = ref.watch(supabaseClientProvider);
   final categories = await ref.watch(categoryRepositoryProvider).getAll();
 
   // Total : species_zones de la zone, on récupère le category_id via jointure.
+  // (Total commun aux deux users — c'est le catalogue curé de la zone.)
   final totalRows = await client
       .from('species_zones')
       .select('species_id, species!inner(category_id)')
       .eq('zone_id', zoneId);
 
-  // Observed : observations de la zone, on récupère le category_id via jointure.
-  final obsRows = await client
-      .from('observations')
-      .select('species_id, species!inner(category_id)')
-      .eq('zone_id', zoneId);
+  // Observed : observations de l'utilisateur courant sur la zone.
+  // Sans userId (pas connecté), on retourne 0 observation côté UI.
+  final obsRows = userId == null
+      ? const <Map<String, dynamic>>[]
+      : await client
+          .from('observations')
+          .select('species_id, species!inner(category_id)')
+          .eq('zone_id', zoneId)
+          .eq('user_id', userId);
 
   final totalByCategory = <String, int>{};
   for (final row in totalRows as List) {
