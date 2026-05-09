@@ -33,6 +33,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   Future<void> _onMapCreated(MapboxMap map) async {
     _circleManager = await map.annotations.createCircleAnnotationManager();
     _circleManager!.tapEvents(onTap: _handleAnnotationTap);
+    // Échelle déplacée en bas à droite — par défaut top-left, masquée par
+    // notre barre de filtres. Logo + attribution Mapbox restent bottom-left.
+    await map.scaleBar.updateSettings(
+      ScaleBarSettings(position: OrnamentPosition.BOTTOM_RIGHT),
+    );
     await _renderAnnotations();
   }
 

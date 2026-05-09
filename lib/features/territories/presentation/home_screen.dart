@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/utils/env.dart';
 import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/level.dart';
@@ -412,25 +413,33 @@ class _OiseCard extends StatelessWidget {
 }
 
 class _OiseMapPlaceholder extends StatelessWidget {
+  // Centre approximatif de l'Oise + zoom département.
+  static const _lat = 49.41;
+  static const _lng = 2.82;
+  static const _zoom = 8;
+
+  String get _staticUrl =>
+      'https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/'
+      '$_lng,$_lat,$_zoom/600x320@2x'
+      '?access_token=${Env.mapboxAccessToken}';
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 128,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFEFE7D2), Color(0xFFD8CFAE)],
-        ),
-      ),
+    return SizedBox(
+      height: 160,
       child: Stack(
+        fit: StackFit.expand,
         children: [
-          Center(
-            child: Icon(
-              Icons.terrain,
-              size: 56,
-              color: forestGreen.withValues(alpha: 0.3),
-            ),
+          Image.network(
+            _staticUrl,
+            fit: BoxFit.cover,
+            // Pendant le chargement : gradient + skeleton.
+            loadingBuilder: (_, child, progress) {
+              if (progress == null) return child;
+              return const _MapFallback();
+            },
+            // En cas d'erreur réseau / quota Mapbox : même gradient en fallback.
+            errorBuilder: (_, _, _) => const _MapFallback(),
           ),
           Positioned(
             top: 12,
@@ -440,6 +449,12 @@ class _OiseMapPlaceholder extends StatelessWidget {
               decoration: BoxDecoration(
                 color: forestGreen,
                 borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF000000).withValues(alpha: 0.15),
+                    blurRadius: 4,
+                  ),
+                ],
               ),
               child: Text(
                 'DOMICILE',
@@ -453,6 +468,30 @@ class _OiseMapPlaceholder extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MapFallback extends StatelessWidget {
+  const _MapFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFEFE7D2), Color(0xFFD8CFAE)],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.terrain,
+          size: 56,
+          color: forestGreen.withValues(alpha: 0.3),
+        ),
       ),
     );
   }
