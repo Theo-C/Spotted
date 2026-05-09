@@ -87,6 +87,9 @@ class ProfileScreen extends ConsumerWidget {
   Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
+      // Sans ça, le dialog s'ouvre sur le root navigator (go_router) et le
+      // pop déstacke la route ProfileScreen → black screen + assertion.
+      useRootNavigator: false,
       builder: (_) => AlertDialog(
         backgroundColor: surfaceBase,
         shape:
