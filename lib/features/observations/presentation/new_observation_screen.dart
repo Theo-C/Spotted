@@ -1233,6 +1233,24 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
     _map = map;
   }
 
+  @override
+  void didUpdateWidget(_MiniMapPicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Quand le parent change lat/lng (typiquement au retour du fullscreen
+    // picker), on recentre la map programmatiquement — sinon le MapWidget
+    // ignore les nouvelles cameraOptions après son init.
+    if ((oldWidget.lat != widget.lat || oldWidget.lng != widget.lng) &&
+        _map != null) {
+      _map!.flyTo(
+        CameraOptions(
+          center: Point(coordinates: Position(widget.lng, widget.lat)),
+          zoom: 11,
+        ),
+        MapAnimationOptions(duration: 600),
+      );
+    }
+  }
+
   Future<void> _onMapIdle(MapIdleEventData _) async {
     final map = _map;
     if (map == null) return;

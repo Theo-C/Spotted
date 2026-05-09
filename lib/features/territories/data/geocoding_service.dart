@@ -1,6 +1,5 @@
-import 'dart:developer' as developer;
-
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/env.dart';
@@ -56,7 +55,7 @@ class GeocodingService {
       );
       final features = response.data?['features'] as List?;
       if (features == null) {
-        developer.log(
+        debugPrint(
           'Geocoding: response has no features. Status=${response.statusCode}',
           name: 'geocoding',
         );
@@ -90,19 +89,17 @@ class GeocodingService {
           country = text;
         }
       }
-      developer.log(
-        'Geocoding ($lat,$lng) → features: ${summary.join(", ")} | parsed: place=$place region=$region country=$country',
-        name: 'geocoding',
+      debugPrint(
+        '[geocoding] ($lat,$lng) → features: ${summary.join(", ")} | parsed: place=$place region=$region country=$country',
       );
       return GeocodingResult(place: place, region: region, country: country);
     } on DioException catch (e) {
-      developer.log(
-        'Geocoding network error: ${e.message} (${e.response?.statusCode})',
-        name: 'geocoding',
+      debugPrint(
+        '[geocoding] network error: ${e.message} (status=${e.response?.statusCode})',
       );
       return null;
     } catch (e) {
-      developer.log('Geocoding parse error: $e', name: 'geocoding');
+      debugPrint('[geocoding] parse error: $e');
       return null;
     }
   }
