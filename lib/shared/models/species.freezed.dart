@@ -15,7 +15,9 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Species {
 
- String get id; String get commonName; String get scientificName; String get categoryId; String? get description; String? get photoUrl; String? get createdByUserId; DateTime get createdAt;
+ String get id; String get commonName; String get scientificName; String get categoryId; String? get description;/// Conseil terrain "Pour la débusquer" — affiché sur la fiche détail
+/// tant que l'espèce n'a pas été observée. Court (1-2 phrases).
+ String? get tips; String? get photoUrl; String? get createdByUserId; DateTime get createdAt;
 /// Create a copy of Species
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +30,16 @@ $SpeciesCopyWith<Species> get copyWith => _$SpeciesCopyWithImpl<Species>(this as
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Species&&(identical(other.id, id) || other.id == id)&&(identical(other.commonName, commonName) || other.commonName == commonName)&&(identical(other.scientificName, scientificName) || other.scientificName == scientificName)&&(identical(other.categoryId, categoryId) || other.categoryId == categoryId)&&(identical(other.description, description) || other.description == description)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&(identical(other.createdByUserId, createdByUserId) || other.createdByUserId == createdByUserId)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Species&&(identical(other.id, id) || other.id == id)&&(identical(other.commonName, commonName) || other.commonName == commonName)&&(identical(other.scientificName, scientificName) || other.scientificName == scientificName)&&(identical(other.categoryId, categoryId) || other.categoryId == categoryId)&&(identical(other.description, description) || other.description == description)&&(identical(other.tips, tips) || other.tips == tips)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&(identical(other.createdByUserId, createdByUserId) || other.createdByUserId == createdByUserId)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,commonName,scientificName,categoryId,description,photoUrl,createdByUserId,createdAt);
+int get hashCode => Object.hash(runtimeType,id,commonName,scientificName,categoryId,description,tips,photoUrl,createdByUserId,createdAt);
 
 @override
 String toString() {
-  return 'Species(id: $id, commonName: $commonName, scientificName: $scientificName, categoryId: $categoryId, description: $description, photoUrl: $photoUrl, createdByUserId: $createdByUserId, createdAt: $createdAt)';
+  return 'Species(id: $id, commonName: $commonName, scientificName: $scientificName, categoryId: $categoryId, description: $description, tips: $tips, photoUrl: $photoUrl, createdByUserId: $createdByUserId, createdAt: $createdAt)';
 }
 
 
@@ -48,7 +50,7 @@ abstract mixin class $SpeciesCopyWith<$Res>  {
   factory $SpeciesCopyWith(Species value, $Res Function(Species) _then) = _$SpeciesCopyWithImpl;
 @useResult
 $Res call({
- String id, String commonName, String scientificName, String categoryId, String? description, String? photoUrl, String? createdByUserId, DateTime createdAt
+ String id, String commonName, String scientificName, String categoryId, String? description, String? tips, String? photoUrl, String? createdByUserId, DateTime createdAt
 });
 
 
@@ -65,13 +67,14 @@ class _$SpeciesCopyWithImpl<$Res>
 
 /// Create a copy of Species
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? commonName = null,Object? scientificName = null,Object? categoryId = null,Object? description = freezed,Object? photoUrl = freezed,Object? createdByUserId = freezed,Object? createdAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? commonName = null,Object? scientificName = null,Object? categoryId = null,Object? description = freezed,Object? tips = freezed,Object? photoUrl = freezed,Object? createdByUserId = freezed,Object? createdAt = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,commonName: null == commonName ? _self.commonName : commonName // ignore: cast_nullable_to_non_nullable
 as String,scientificName: null == scientificName ? _self.scientificName : scientificName // ignore: cast_nullable_to_non_nullable
 as String,categoryId: null == categoryId ? _self.categoryId : categoryId // ignore: cast_nullable_to_non_nullable
 as String,description: freezed == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
+as String?,tips: freezed == tips ? _self.tips : tips // ignore: cast_nullable_to_non_nullable
 as String?,photoUrl: freezed == photoUrl ? _self.photoUrl : photoUrl // ignore: cast_nullable_to_non_nullable
 as String?,createdByUserId: freezed == createdByUserId ? _self.createdByUserId : createdByUserId // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
@@ -160,10 +163,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String commonName,  String scientificName,  String categoryId,  String? description,  String? photoUrl,  String? createdByUserId,  DateTime createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String commonName,  String scientificName,  String categoryId,  String? description,  String? tips,  String? photoUrl,  String? createdByUserId,  DateTime createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Species() when $default != null:
-return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,_that.description,_that.photoUrl,_that.createdByUserId,_that.createdAt);case _:
+return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,_that.description,_that.tips,_that.photoUrl,_that.createdByUserId,_that.createdAt);case _:
   return orElse();
 
 }
@@ -181,10 +184,10 @@ return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String commonName,  String scientificName,  String categoryId,  String? description,  String? photoUrl,  String? createdByUserId,  DateTime createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String commonName,  String scientificName,  String categoryId,  String? description,  String? tips,  String? photoUrl,  String? createdByUserId,  DateTime createdAt)  $default,) {final _that = this;
 switch (_that) {
 case _Species():
-return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,_that.description,_that.photoUrl,_that.createdByUserId,_that.createdAt);case _:
+return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,_that.description,_that.tips,_that.photoUrl,_that.createdByUserId,_that.createdAt);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -201,10 +204,10 @@ return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String commonName,  String scientificName,  String categoryId,  String? description,  String? photoUrl,  String? createdByUserId,  DateTime createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String commonName,  String scientificName,  String categoryId,  String? description,  String? tips,  String? photoUrl,  String? createdByUserId,  DateTime createdAt)?  $default,) {final _that = this;
 switch (_that) {
 case _Species() when $default != null:
-return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,_that.description,_that.photoUrl,_that.createdByUserId,_that.createdAt);case _:
+return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,_that.description,_that.tips,_that.photoUrl,_that.createdByUserId,_that.createdAt);case _:
   return null;
 
 }
@@ -216,7 +219,7 @@ return $default(_that.id,_that.commonName,_that.scientificName,_that.categoryId,
 @JsonSerializable()
 
 class _Species implements Species {
-  const _Species({required this.id, required this.commonName, required this.scientificName, required this.categoryId, this.description, this.photoUrl, this.createdByUserId, required this.createdAt});
+  const _Species({required this.id, required this.commonName, required this.scientificName, required this.categoryId, this.description, this.tips, this.photoUrl, this.createdByUserId, required this.createdAt});
   factory _Species.fromJson(Map<String, dynamic> json) => _$SpeciesFromJson(json);
 
 @override final  String id;
@@ -224,6 +227,9 @@ class _Species implements Species {
 @override final  String scientificName;
 @override final  String categoryId;
 @override final  String? description;
+/// Conseil terrain "Pour la débusquer" — affiché sur la fiche détail
+/// tant que l'espèce n'a pas été observée. Court (1-2 phrases).
+@override final  String? tips;
 @override final  String? photoUrl;
 @override final  String? createdByUserId;
 @override final  DateTime createdAt;
@@ -241,16 +247,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Species&&(identical(other.id, id) || other.id == id)&&(identical(other.commonName, commonName) || other.commonName == commonName)&&(identical(other.scientificName, scientificName) || other.scientificName == scientificName)&&(identical(other.categoryId, categoryId) || other.categoryId == categoryId)&&(identical(other.description, description) || other.description == description)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&(identical(other.createdByUserId, createdByUserId) || other.createdByUserId == createdByUserId)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Species&&(identical(other.id, id) || other.id == id)&&(identical(other.commonName, commonName) || other.commonName == commonName)&&(identical(other.scientificName, scientificName) || other.scientificName == scientificName)&&(identical(other.categoryId, categoryId) || other.categoryId == categoryId)&&(identical(other.description, description) || other.description == description)&&(identical(other.tips, tips) || other.tips == tips)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&(identical(other.createdByUserId, createdByUserId) || other.createdByUserId == createdByUserId)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,commonName,scientificName,categoryId,description,photoUrl,createdByUserId,createdAt);
+int get hashCode => Object.hash(runtimeType,id,commonName,scientificName,categoryId,description,tips,photoUrl,createdByUserId,createdAt);
 
 @override
 String toString() {
-  return 'Species(id: $id, commonName: $commonName, scientificName: $scientificName, categoryId: $categoryId, description: $description, photoUrl: $photoUrl, createdByUserId: $createdByUserId, createdAt: $createdAt)';
+  return 'Species(id: $id, commonName: $commonName, scientificName: $scientificName, categoryId: $categoryId, description: $description, tips: $tips, photoUrl: $photoUrl, createdByUserId: $createdByUserId, createdAt: $createdAt)';
 }
 
 
@@ -261,7 +267,7 @@ abstract mixin class _$SpeciesCopyWith<$Res> implements $SpeciesCopyWith<$Res> {
   factory _$SpeciesCopyWith(_Species value, $Res Function(_Species) _then) = __$SpeciesCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String commonName, String scientificName, String categoryId, String? description, String? photoUrl, String? createdByUserId, DateTime createdAt
+ String id, String commonName, String scientificName, String categoryId, String? description, String? tips, String? photoUrl, String? createdByUserId, DateTime createdAt
 });
 
 
@@ -278,13 +284,14 @@ class __$SpeciesCopyWithImpl<$Res>
 
 /// Create a copy of Species
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? commonName = null,Object? scientificName = null,Object? categoryId = null,Object? description = freezed,Object? photoUrl = freezed,Object? createdByUserId = freezed,Object? createdAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? commonName = null,Object? scientificName = null,Object? categoryId = null,Object? description = freezed,Object? tips = freezed,Object? photoUrl = freezed,Object? createdByUserId = freezed,Object? createdAt = null,}) {
   return _then(_Species(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,commonName: null == commonName ? _self.commonName : commonName // ignore: cast_nullable_to_non_nullable
 as String,scientificName: null == scientificName ? _self.scientificName : scientificName // ignore: cast_nullable_to_non_nullable
 as String,categoryId: null == categoryId ? _self.categoryId : categoryId // ignore: cast_nullable_to_non_nullable
 as String,description: freezed == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
+as String?,tips: freezed == tips ? _self.tips : tips // ignore: cast_nullable_to_non_nullable
 as String?,photoUrl: freezed == photoUrl ? _self.photoUrl : photoUrl // ignore: cast_nullable_to_non_nullable
 as String?,createdByUserId: freezed == createdByUserId ? _self.createdByUserId : createdByUserId // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable

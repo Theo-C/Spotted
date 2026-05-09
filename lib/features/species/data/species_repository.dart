@@ -37,6 +37,7 @@ class SpeciesRepository {
     required String scientificName,
     required String categoryId,
     String? description,
+    String? tips,
     String? photoUrl,
     String? createdByUserId,
   }) async {
@@ -47,6 +48,7 @@ class SpeciesRepository {
           'scientific_name': scientificName,
           'category_id': categoryId,
           'description': description,
+          'tips': tips,
           'photo_url': photoUrl,
           'created_by_user_id': createdByUserId,
         })

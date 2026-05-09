@@ -34,6 +34,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
   final _commonName = TextEditingController();
   final _scientificName = TextEditingController();
   final _description = TextEditingController();
+  final _tips = TextEditingController();
   String? _selectedCategoryId;
   Rarity _selectedRarity = Rarity.common;
   bool _submitting = false;
@@ -47,6 +48,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
     _commonName.dispose();
     _scientificName.dispose();
     _description.dispose();
+    _tips.dispose();
     super.dispose();
   }
 
@@ -64,6 +66,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
       _commonName.text = detail.species.commonName;
       _scientificName.text = detail.species.scientificName;
       _description.text = detail.species.description ?? '';
+      _tips.text = detail.species.tips ?? '';
       _selectedCategoryId = detail.species.categoryId;
       _selectedRarity = detail.rarity;
     });
@@ -89,6 +92,8 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
       final client = ref.read(supabaseClientProvider);
       final desc =
           _description.text.trim().isEmpty ? null : _description.text.trim();
+      final tipsText =
+          _tips.text.trim().isEmpty ? null : _tips.text.trim();
 
       String speciesId;
       if (_isEditing) {
@@ -103,6 +108,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
                 scientificName: sn,
                 categoryId: _selectedCategoryId!,
                 description: desc,
+                tips: tipsText,
                 photoUrl: original.photoUrl,
                 createdByUserId: original.createdByUserId,
                 createdAt: original.createdAt,
@@ -123,6 +129,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               scientificName: sn,
               categoryId: _selectedCategoryId!,
               description: desc,
+              tips: tipsText,
             );
         speciesId = created.id;
         await client.from('species_zones').insert({
@@ -221,7 +228,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
             if (_isEditing) ...[
               const SizedBox(height: 4),
               Text(
-                'Les noms ne peuvent pas être modifiés en édition. Tu peux ajuster catégorie, rareté et description.',
+                'Les noms ne peuvent pas être modifiés en édition. Tu peux ajuster catégorie, rareté, description et conseil terrain.',
                 style: GoogleFonts.karla(
                   fontSize: 11,
                   fontStyle: FontStyle.italic,
@@ -281,6 +288,14 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               controller: _description,
               hint: 'Habitat, comportement, signes distinctifs…',
               maxLines: 4,
+            ),
+            const SizedBox(height: 16),
+            const _Label('Pour la débusquer (conseil terrain)'),
+            const SizedBox(height: 6),
+            _TextInput(
+              controller: _tips,
+              hint: 'Où, quand, comment chercher cette espèce sur le terrain…',
+              maxLines: 3,
             ),
             if (_error != null) ...[
               const SizedBox(height: 16),

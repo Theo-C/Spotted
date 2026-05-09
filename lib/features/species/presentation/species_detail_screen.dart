@@ -152,6 +152,13 @@ class _DetailBody extends StatelessWidget {
                     height: 1.5,
                   ),
                 ),
+                if (!isObserved && detail.species.tips != null) ...[
+                  const SizedBox(height: 16),
+                  _SpottingTipsCard(
+                    tips: detail.species.tips!,
+                    rarity: detail.rarity,
+                  ),
+                ],
                 const SizedBox(height: 24),
                 if (!isObserved)
                   _ObserveButton(
@@ -475,6 +482,61 @@ class _StatTile extends StatelessWidget {
               fontSize: 18,
               fontWeight: FontWeight.bold,
               color: highlighted ? surfaceBase : forestGreen,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Carte "Pour la débusquer" — conseil terrain affiché sur la fiche d'une
+/// espèce non encore observée. Bordure et accents dans la couleur de rareté
+/// pour rappeler le niveau de difficulté de l'obs à venir.
+class _SpottingTipsCard extends StatelessWidget {
+  const _SpottingTipsCard({required this.tips, required this.rarity});
+
+  final String tips;
+  final Rarity rarity;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _rarityColor(rarity);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color, width: 1.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.center_focus_strong, size: 16, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'POUR LA DÉBUSQUER',
+                  style: GoogleFonts.karla(
+                    fontSize: 10,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tips,
+                  style: GoogleFonts.cormorantGaramond(
+                    fontSize: 14,
+                    color: textPrimary,
+                    height: 1.4,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

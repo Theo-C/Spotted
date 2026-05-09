@@ -11,6 +11,9 @@ abstract class Species with _$Species {
     required String scientificName,
     required String categoryId,
     String? description,
+    /// Conseil terrain "Pour la débusquer" — affiché sur la fiche détail
+    /// tant que l'espèce n'a pas été observée. Court (1-2 phrases).
+    String? tips,
     String? photoUrl,
     String? createdByUserId,
     required DateTime createdAt,
