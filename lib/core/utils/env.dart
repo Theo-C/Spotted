@@ -4,6 +4,7 @@ abstract class Env {
   static String get supabaseUrl => _required('SUPABASE_URL');
   static String get supabaseAnonKey => _required('SUPABASE_ANON_KEY');
   static String get mapboxAccessToken => _required('MAPBOX_ACCESS_TOKEN');
+  static String get anthropicApiKey => _required('ANTHROPIC_API_KEY');
 
   static String _required(String key) {
     final value = dotenv.env[key];
