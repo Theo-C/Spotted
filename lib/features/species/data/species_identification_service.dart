@@ -23,43 +23,95 @@ class SpeciesIdentificationService {
   static const _endpoint = 'https://api.anthropic.com/v1/messages';
 
   static const _systemPrompt = '''
-Tu es un expert naturaliste français spécialisé dans la faune sauvage européenne.
-Tu identifies les espèces (oiseaux, mammifères, reptiles, chiroptères) depuis une photo.
+Tu es un expert naturaliste français spécialisé dans la faune sauvage européenne
+(oiseaux, mammifères, reptiles, chiroptères).
+
+# Méthode d'identification
+
+Pour chaque photo, raisonne étape par étape AVANT de conclure :
+1. **Taille relative** estimée (par rapport à des objets ou autres animaux visibles)
+2. **Silhouette globale** (proportions, attitude, pose)
+3. **Bec / museau / face** (forme, couleur, taille relative)
+4. **Plumage / pelage** (couleurs, motifs, contrastes)
+5. **Queue / arrière-train** (forme, longueur)
+6. **Habitat / contexte** (forêt, eau, ciel, prairie, milieu humain)
+7. Élimine d'abord les espèces clairement incompatibles
+8. Compare les espèces restantes selon leurs **critères diagnostiques**
+
+# Cas de confusion classiques en France (à connaître)
+
+- **Grand Corbeau (Corvus corax)** vs **Corbeau freux (Corvus frugilegus)** vs **Corneille noire (Corvus corone)** :
+  - Grand Corbeau : très grand, bec massif, queue **cunéiforme** (forme de losange), faciès uniforme noir, vol planant majestueux
+  - Corbeau freux : plumage à reflets violets, **face nue gris-blanchâtre adulte**, bec plus pointu, vit en colonies
+  - Corneille noire : taille moyenne, bec moins massif, queue carrée, face entièrement emplumée, plus solitaire
+- **Buse variable** vs **Bondrée apivore** : Bondrée a queue plus longue avec barres distinctes, tête plus petite et "pigeonneau"
+- **Chouette hulotte** vs **Chouette effraie** : Effraie a face en cœur blanche, Hulotte a tête arrondie marbrée
+- **Pic épeiche** vs **Pic mar** : Mar a calotte rouge entière (mâle ET femelle), pas de moustache fermée
+- **Faucon crécerelle** vs **Faucon hobereau** : Hobereau plus sombre, faucille plus marquée, "moustaches" très contrastées
+- **Mésange charbonnière** (très commune) vs **Mésange bleue** (très commune) : tête noire vs tête bleue
+- **Étourneau sansonnet** (très commun, exclu de Spotted) vs **Merle noir** (très commun, exclu) : étourneau plus pétillant, vol direct en groupe
+- **Aigrette garzette** vs **Grande aigrette** : Garzette plus petite, **pieds jaunes** sur pattes noires
+
+# Format de réponse
 
 Tu réponds UNIQUEMENT en JSON valide, sans texte hors-JSON, sans bloc markdown,
-suivant exactement ce schéma :
+suivant EXACTEMENT ce schéma :
 
 {
   "detected": true|false,
-  "common_name": "Nom français standard (ex: 'Buse variable')",
-  "scientific_name": "Nom binominal latin (ex: 'Buteo buteo')",
-  "category_key": "birds" | "mammals" | "reptiles" | "bats",
-  "rarity_key": "common" | "rare" | "epic" | "legendary",
-  "confidence": 0.0..1.0,
-  "rationale": "Une phrase courte (max 25 mots) justifiant l'identification"
+  "candidates": [
+    {
+      "common_name": "Nom français standard",
+      "scientific_name": "Nom binominal latin",
+      "category_key": "birds" | "mammals" | "reptiles" | "bats",
+      "rarity_key": "common" | "rare" | "epic" | "legendary",
+      "confidence": 0.0..1.0
+    },
+    ... (1 à 3 candidats, classés par confiance décroissante)
+  ],
+  "rationale": "Phrase courte (max 30 mots) qui pointe les critères diagnostiques observés"
 }
 
-Conventions raretés (en France métropolitaine) :
-- common : espèce courante, visible toute l'année (buse variable, héron cendré)
-- rare : présence localisée ou en déclin (épervier, chouette effraie)
-- epic : espèce remarquable, à certaines saisons/lieux (faucon pèlerin, huppe fasciée)
-- legendary : très discrète, limite d'aire, passage migratoire (balbuzard, butor étoilé)
+# Règles importantes
 
-Si la photo ne montre pas un animal sauvage identifiable (paysage, plante,
-animal domestique, photo floue), renvoie "detected": false avec champs vides
-sauf "rationale" qui explique pourquoi.
+- **Toujours proposer 2-3 candidats** si tu as un doute, même léger. Préfère 3 candidats avec scores honnêtes à 1 candidat avec score gonflé.
+- **Sois prudent sur la confiance** : 0.9+ uniquement si l'identification est sans ambiguïté. 0.5-0.7 si tu hésites entre plusieurs espèces. 0.3-0.5 si très incertain.
+- Les confidences ne doivent PAS forcément sommer à 1.0 — elles reflètent ta confiance individuelle dans chaque hypothèse.
+- Si la photo ne montre pas un animal sauvage identifiable (paysage, plante, chat/chien, photo floue, espèce hors d'Europe), renvoie `"detected": false` avec `"candidates": []` et explique dans `rationale`.
 
-Si tu hésites entre plusieurs espèces, donne la plus probable avec confidence < 0.6.
+# Conventions raretés (en France métropolitaine)
+
+- **common** : courante, visible toute l'année (buse variable, héron cendré, pic épeiche)
+- **rare** : localisée ou en déclin (épervier, effraie, martin-pêcheur)
+- **epic** : remarquable, à certaines saisons/lieux (pèlerin, huppe, chevêche)
+- **legendary** : très discrète, limite d'aire, passage occasionnel (balbuzard, butor, grand-duc)
 ''';
 
   /// Identifie l'espèce sur [photo].
+  ///
+  /// [curatedSpecies] : liste optionnelle des espèces curées pour le territoire
+  /// de la photo. Permet à l'IA de privilégier les espèces déjà connues du
+  /// catalogue (gain de précision important — élimine les faux positifs hors
+  /// répartition).
+  ///
+  /// [regionName] : nom du département/région (ex: "Oise", "Aisne") déduit
+  /// du reverse-geocoding. Donne au modèle un contexte biogéographique.
+  ///
   /// Renvoie null en cas d'erreur (réseau, parsing). L'app continue alors
   /// en mode manuel.
-  Future<SpeciesIdentification?> identifyFromFile(File photo) async {
+  Future<SpeciesIdentification?> identifyFromFile(
+    File photo, {
+    List<({String commonName, String scientificName})>? curatedSpecies,
+    String? regionName,
+  }) async {
     try {
       final bytes = await photo.readAsBytes();
       final encoded = base64Encode(bytes);
       final mediaType = _detectMediaType(photo.path);
+      final userText = _buildUserPrompt(
+        curatedSpecies: curatedSpecies,
+        regionName: regionName,
+      );
 
       final response = await _dio.post<Map<String, dynamic>>(
         _endpoint,
@@ -75,7 +127,8 @@ Si tu hésites entre plusieurs espèces, donne la plus probable avec confidence 
         ),
         data: {
           'model': _model,
-          'max_tokens': 500,
+          // Plus de tokens pour permettre 3 candidats + rationale détaillée.
+          'max_tokens': 800,
           'system': _systemPrompt,
           'messages': [
             {
@@ -91,8 +144,7 @@ Si tu hésites entre plusieurs espèces, donne la plus probable avec confidence 
                 },
                 {
                   'type': 'text',
-                  'text':
-                      "Identifie l'espèce sur cette photo selon le schéma JSON.",
+                  'text': userText,
                 },
               ],
             },
@@ -130,6 +182,34 @@ Si tu hésites entre plusieurs espèces, donne la plus probable avec confidence 
           name: 'species_id');
       return null;
     }
+  }
+
+  String _buildUserPrompt({
+    List<({String commonName, String scientificName})>? curatedSpecies,
+    String? regionName,
+  }) {
+    final buf = StringBuffer(
+      "Identifie l'espèce sur cette photo en suivant la méthode et le format JSON.",
+    );
+    if (regionName != null && regionName.isNotEmpty) {
+      buf.write(
+        '\n\nContexte : photo prise dans le département **$regionName**, en France métropolitaine.',
+      );
+    }
+    if (curatedSpecies != null && curatedSpecies.isNotEmpty) {
+      buf.write(
+        '\n\nVoici les espèces curées pour ce territoire (sur lesquelles l\'utilisateur a déjà une fiche dans son carnet) :',
+      );
+      for (final s in curatedSpecies) {
+        buf.write('\n- ${s.commonName} *(${s.scientificName})*');
+      }
+      buf.write(
+        '\n\nPrivilégie ces espèces si l\'identification visuelle le permet. '
+        'Tu peux proposer une espèce hors liste UNIQUEMENT si la photo correspond '
+        'clairement à autre chose ; mentionne-le alors dans le rationale.',
+      );
+    }
+    return buf.toString();
   }
 
   String _detectMediaType(String path) {

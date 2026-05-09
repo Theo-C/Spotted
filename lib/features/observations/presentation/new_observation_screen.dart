@@ -83,9 +83,33 @@ class _NewObservationScreenState
   }
 
   Future<void> _runIdentification(File file) async {
+    // Récupère le contexte (espèces curées + département) pour enrichir le
+    // prompt et améliorer la précision de l'identification.
+    final oise = await ref.read(oiseZoneProvider.future);
+    final allSpeciesAsync = ref.read(_zoneSpeciesProvider(oise.id).future);
+    final geocodingFuture = (_lat != null && _lng != null)
+        ? ref
+            .read(geocodingServiceProvider)
+            .reverseGeocode(lat: _lat!, lng: _lng!)
+        : Future.value(null);
+    final allSpecies = await allSpeciesAsync;
+    final geocoding = await geocodingFuture;
+    final regionName = geocoding?.region;
+
+    final curated = allSpecies
+        .map((s) => (
+              commonName: s.species.commonName,
+              scientificName: s.species.scientificName,
+            ))
+        .toList();
+
     final result = await ref
         .read(speciesIdentificationServiceProvider)
-        .identifyFromFile(file);
+        .identifyFromFile(
+          file,
+          curatedSpecies: curated,
+          regionName: regionName,
+        );
     if (!mounted) return;
     setState(() {
       _identification = result;
@@ -93,13 +117,11 @@ class _NewObservationScreenState
     });
   }
 
-  Future<void> _acceptSuggestion() async {
-    final id = _identification;
-    if (id == null || !id.detected || id.scientificName.isEmpty) return;
-
+  Future<void> _acceptCandidate(SpeciesCandidate candidate) async {
+    if (candidate.scientificName.isEmpty) return;
     final oise = await ref.read(oiseZoneProvider.future);
     final allSpecies = await ref.read(_zoneSpeciesProvider(oise.id).future);
-    final scientificLower = id.scientificName.toLowerCase();
+    final scientificLower = candidate.scientificName.toLowerCase();
     final match = allSpecies.cast<({Species species, Rarity rarity})?>().firstWhere(
           (s) =>
               s!.species.scientificName.toLowerCase() == scientificLower,
@@ -114,10 +136,9 @@ class _NewObservationScreenState
       final newId = await showDialog<String>(
         context: context,
         builder: (_) =>
-            _AddSpeciesDialog(identification: id, zoneId: oise.id),
+            _AddSpeciesDialog(candidate: candidate, zoneId: oise.id),
       );
       if (newId != null && mounted) {
-        // Invalide le cache des espèces de la zone pour que la nouvelle apparaisse.
         ref.invalidate(_zoneSpeciesProvider);
         ref.invalidate(speciesByCategoryInZoneProvider);
         ref.invalidate(categoriesWithProgressProvider);
@@ -328,7 +349,7 @@ class _NewObservationScreenState
               _IaSuggestionCard(
                 identifying: _identifying,
                 identification: _identification,
-                onAccept: _acceptSuggestion,
+                onAcceptCandidate: _acceptCandidate,
                 onDismiss: () => setState(() => _suggestionDismissed = true),
               ),
             ],
@@ -575,13 +596,13 @@ class _IaSuggestionCard extends StatelessWidget {
   const _IaSuggestionCard({
     required this.identifying,
     required this.identification,
-    required this.onAccept,
+    required this.onAcceptCandidate,
     required this.onDismiss,
   });
 
   final bool identifying;
   final SpeciesIdentification? identification;
-  final VoidCallback onAccept;
+  final void Function(SpeciesCandidate) onAcceptCandidate;
   final VoidCallback onDismiss;
 
   @override
@@ -620,7 +641,7 @@ class _IaSuggestionCard extends StatelessWidget {
     final id = identification;
     if (id == null) return const SizedBox.shrink();
 
-    if (!id.detected) {
+    if (!id.detected || id.candidates.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -656,8 +677,6 @@ class _IaSuggestionCard extends StatelessWidget {
       );
     }
 
-    final pct = (id.confidence * 100).round();
-    final lowConfidence = id.confidence < 0.6;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -680,7 +699,7 @@ class _IaSuggestionCard extends StatelessWidget {
               const Icon(Icons.auto_awesome, color: gold, size: 16),
               const SizedBox(width: 6),
               Text(
-                'SUGGESTION IA',
+                'SUGGESTIONS IA',
                 style: GoogleFonts.karla(
                   fontSize: 10,
                   letterSpacing: 1.5,
@@ -689,49 +708,14 @@ class _IaSuggestionCard extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: lowConfidence
-                      ? terracotta.withValues(alpha: 0.15)
-                      : forestGreen.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$pct %',
-                  style: GoogleFonts.karla(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: lowConfidence ? terracotta : forestGreen,
-                  ),
-                ),
-              ),
               IconButton(
                 icon: const Icon(Icons.close, size: 14, color: textMuted),
                 onPressed: onDismiss,
                 tooltip: 'Masquer',
-                padding: const EdgeInsets.only(left: 6),
+                padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),
             ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            id.commonName,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: forestGreen,
-              height: 1.1,
-            ),
-          ),
-          Text(
-            id.scientificName,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 13,
-              fontStyle: FontStyle.italic,
-              color: terracotta,
-            ),
           ),
           if (id.rationale.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -745,36 +729,129 @@ class _IaSuggestionCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: onAccept,
-            style: FilledButton.styleFrom(
-              backgroundColor: gold,
-              foregroundColor: forestGreen,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
+          for (var i = 0; i < id.candidates.length; i++) ...[
+            _CandidateRow(
+              candidate: id.candidates[i],
+              rank: i + 1,
+              onTap: () => onAcceptCandidate(id.candidates[i]),
             ),
-            icon: const Icon(Icons.check, size: 16),
-            label: Text(
-              "UTILISER CETTE SUGGESTION",
-              style: GoogleFonts.karla(
-                fontSize: 11,
-                letterSpacing: 1.5,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
+            if (i < id.candidates.length - 1) const SizedBox(height: 6),
+          ],
         ],
       ),
     );
   }
 }
 
-class _AddSpeciesDialog extends ConsumerStatefulWidget {
-  const _AddSpeciesDialog({required this.identification, required this.zoneId});
+class _CandidateRow extends StatelessWidget {
+  const _CandidateRow({
+    required this.candidate,
+    required this.rank,
+    required this.onTap,
+  });
 
-  final SpeciesIdentification identification;
+  final SpeciesCandidate candidate;
+  final int rank;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (candidate.confidence * 100).round();
+    final isLow = candidate.confidence < 0.5;
+    return Material(
+      color: rank == 1 ? surfaceBase : surfaceCard,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: rank == 1 ? gold : const Color(0xFFE8E0CE),
+              width: rank == 1 ? 1.5 : 1,
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: rank == 1
+                      ? gold
+                      : const Color(0xFFE8E0CE),
+                ),
+                child: Center(
+                  child: Text(
+                    '$rank',
+                    style: GoogleFonts.karla(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: rank == 1 ? forestGreen : textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      candidate.commonName,
+                      style: GoogleFonts.cormorantGaramond(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: forestGreen,
+                        height: 1.1,
+                      ),
+                    ),
+                    Text(
+                      candidate.scientificName,
+                      style: GoogleFonts.cormorantGaramond(
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                        color: terracotta,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isLow
+                      ? terracotta.withValues(alpha: 0.15)
+                      : forestGreen.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$pct %',
+                  style: GoogleFonts.karla(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: isLow ? terracotta : forestGreen,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, size: 18, color: textSecondary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddSpeciesDialog extends ConsumerStatefulWidget {
+  const _AddSpeciesDialog({required this.candidate, required this.zoneId});
+
+  final SpeciesCandidate candidate;
   final String zoneId;
 
   @override
@@ -790,7 +867,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   @override
   void initState() {
     super.initState();
-    _selectedRarity = _rarityFromKey(widget.identification.rarityKey);
+    _selectedRarity = _rarityFromKey(widget.candidate.rarityKey);
   }
 
   Rarity _rarityFromKey(String key) {
@@ -810,12 +887,11 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
       _error = null;
     });
     try {
-      final id = widget.identification;
+      final c = widget.candidate;
       final created = await ref.read(speciesRepositoryProvider).create(
-            commonName: id.commonName,
-            scientificName: id.scientificName,
+            commonName: c.commonName,
+            scientificName: c.scientificName,
             categoryId: _selectedCategoryId!,
-            description: id.rationale.isEmpty ? null : id.rationale,
           );
       // INSERT direct dans species_zones (pas de repo dédié au MVP).
       await ref.read(supabaseClientProvider).from('species_zones').insert({
@@ -844,7 +920,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   @override
   Widget build(BuildContext context) {
     final categoriesAsync = ref.watch(_categoriesProvider);
-    final id = widget.identification;
+    final c = widget.candidate;
     return Dialog(
       backgroundColor: surfaceBase,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -885,7 +961,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      id.commonName,
+                      c.commonName,
                       style: GoogleFonts.cormorantGaramond(
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
@@ -893,7 +969,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                       ),
                     ),
                     Text(
-                      id.scientificName,
+                      c.scientificName,
                       style: GoogleFonts.cormorantGaramond(
                         fontSize: 13,
                         fontStyle: FontStyle.italic,
@@ -928,7 +1004,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                   _selectedCategoryId ??= categories
                       .cast<model.Category?>()
                       .firstWhere(
-                        (c) => c!.icon == id.categoryKey,
+                        (cat) => cat!.icon == c.categoryKey,
                         orElse: () => null,
                       )
                       ?.id;
