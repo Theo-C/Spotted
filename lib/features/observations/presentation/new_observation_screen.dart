@@ -1371,14 +1371,28 @@ class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
     if (map == null) return;
     final state = await map.getCameraState();
     final pos = state.center.coordinates;
-    setState(() {
-      _lat = pos.lat.toDouble();
-      _lng = pos.lng.toDouble();
-    });
+    if (mounted) {
+      setState(() {
+        _lat = pos.lat.toDouble();
+        _lng = pos.lng.toDouble();
+      });
+    }
   }
 
-  void _confirm() {
-    Navigator.of(context).pop((lat: _lat, lng: _lng));
+  /// Récupère la position courante de la map directement (pas via le state),
+  /// pour éviter le cas où onMapIdleListener n'a pas encore tiré.
+  Future<void> _confirm() async {
+    final map = _map;
+    if (map == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    final state = await map.getCameraState();
+    final pos = state.center.coordinates;
+    if (!mounted) return;
+    Navigator.of(context).pop(
+      (lat: pos.lat.toDouble(), lng: pos.lng.toDouble()),
+    );
   }
 
   @override
