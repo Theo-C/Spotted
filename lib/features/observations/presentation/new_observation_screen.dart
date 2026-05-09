@@ -208,26 +208,52 @@ class _NewObservationScreenState
       final lat = _lat ?? 49.41; // centre approximatif Oise (fallback EXIF absent)
       final lng = _lng ?? 2.82;
 
-      // Détection territoire — bloque si la photo a un GPS hors zones curées.
-      // Photo sans GPS → on garde le fallback Oise (l'utilisateur a accepté le défaut).
+      // Détection territoire — bloque si la position GPS n'est pas dans Oise.
+      // Photo sans GPS → fallback Oise (l'utilisateur a accepté le défaut).
       if (_lat != null && _lng != null) {
         final geocoding = await ref
             .read(geocodingServiceProvider)
             .reverseGeocode(lat: _lat!, lng: _lng!);
-        final region = geocoding?.region;
-        // Debug temporaire : on trace ce que Mapbox renvoie pour comprendre
-        // pourquoi le blocage ne se déclenchait pas.
-        // ignore: avoid_print
         debugPrint(
-          'Territory check: lat=$_lat lng=$_lng → place=${geocoding?.place} region=$region country=${geocoding?.country}',
+          'Territory check: lat=$_lat lng=$_lng → place=${geocoding?.place} region=${geocoding?.region} country=${geocoding?.country}',
         );
+
+        final country = geocoding?.country;
+        final region = geocoding?.region;
+
+        // 1. Geocoding totalement raté → on bloque (sécurité).
+        if (geocoding == null ||
+            (country == null && region == null && geocoding.place == null)) {
+          if (mounted) {
+            setState(() {
+              _submitting = false;
+              _error =
+                  'Impossible de déterminer le lieu. Vérifie ta connexion et réessaie, ou repositionne le marqueur sur la mini-carte.';
+            });
+          }
+          return;
+        }
+
+        // 2. Hors France → bloque.
+        if (country != null && country != 'France') {
+          if (mounted) {
+            setState(() {
+              _submitting = false;
+              _error =
+                  'Cette position est en « $country ». Seule l\'Oise (France) est curée pour le moment.';
+            });
+          }
+          return;
+        }
+
+        // 3. En France mais hors Oise → bloque.
         if (region != null && region != 'Oise') {
           if (mounted) {
             setState(() {
               _submitting = false;
               _error =
-                  'Cette photo est dans « $region ». Seule l\'Oise est curée pour le moment. '
-                  'Choisis une autre photo ou (bientôt) repositionne le marqueur sur la mini-carte.';
+                  'Cette position est en « $region ». Seule l\'Oise est curée. '
+                  'Repositionne le marqueur sur la mini-carte ou choisis une autre photo.';
             });
           }
           return;
@@ -1215,6 +1241,21 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
     widget.onPositionChanged((lat: pos.lat.toDouble(), lng: pos.lng.toDouble()));
   }
 
+  Future<void> _openFullscreen() async {
+    final result = await Navigator.of(context).push<({double lat, double lng})>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _FullscreenMapPicker(
+          initialLat: widget.lat,
+          initialLng: widget.lng,
+        ),
+      ),
+    );
+    if (result != null) {
+      widget.onPositionChanged(result);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
@@ -1231,15 +1272,12 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
               styleUri: MapboxStyles.OUTDOORS,
               onMapCreated: _onMapCreated,
               onMapIdleListener: _onMapIdle,
-              // Absorbe pan vertical + pinch sans laisser le SingleChildScrollView
-              // parent les capturer (sinon on ne peut que paner vers le bas).
               gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
                 Factory<OneSequenceGestureRecognizer>(
                   EagerGestureRecognizer.new,
                 ),
               },
             ),
-            // Marker fixe (overlay Flutter), pointe sur le centre exact de la carte.
             const Center(
               child: Padding(
                 padding: EdgeInsets.only(bottom: 32),
@@ -1250,11 +1288,32 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
                 ),
               ),
             ),
-            // Petit hint en bas
+            // Bouton fullscreen, top-right
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Material(
+                color: surfaceBase.withValues(alpha: 0.95),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _openFullscreen,
+                  child: const SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: Icon(
+                      Icons.fullscreen,
+                      color: forestGreen,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ),
             Positioned(
               bottom: 6,
               left: 6,
-              right: 6,
+              right: 44,
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1275,6 +1334,141 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Page plein écran pour ajuster la position avec une grande carte.
+/// Renvoie en pop la position du centre quand l'utilisateur valide.
+class _FullscreenMapPicker extends StatefulWidget {
+  const _FullscreenMapPicker({
+    required this.initialLat,
+    required this.initialLng,
+  });
+
+  final double initialLat;
+  final double initialLng;
+
+  @override
+  State<_FullscreenMapPicker> createState() => _FullscreenMapPickerState();
+}
+
+class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
+  MapboxMap? _map;
+  double _lat = 0;
+  double _lng = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _lat = widget.initialLat;
+    _lng = widget.initialLng;
+  }
+
+  Future<void> _onMapIdle(MapIdleEventData _) async {
+    final map = _map;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    final pos = state.center.coordinates;
+    setState(() {
+      _lat = pos.lat.toDouble();
+      _lng = pos.lng.toDouble();
+    });
+  }
+
+  void _confirm() {
+    Navigator.of(context).pop((lat: _lat, lng: _lng));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Ajuster la position',
+          style: GoogleFonts.cormorantGaramond(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: forestGreen,
+          ),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: forestGreen),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: Stack(
+        children: [
+          MapWidget(
+            cameraOptions: CameraOptions(
+              center: Point(coordinates: Position(_lng, _lat)),
+              zoom: 12,
+            ),
+            styleUri: MapboxStyles.OUTDOORS,
+            onMapCreated: (m) => _map = m,
+            onMapIdleListener: _onMapIdle,
+          ),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: 36),
+              child: Icon(
+                Icons.location_on,
+                color: terracotta,
+                size: 44,
+              ),
+            ),
+          ),
+          // Coordonnées live en haut
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: surfaceBase.withValues(alpha: 0.95),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '${_lat.toStringAsFixed(5)}, ${_lng.toStringAsFixed(5)}',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: forestGreen,
+                ),
+              ),
+            ),
+          ),
+          // Bouton valider en bas
+          Positioned(
+            bottom: 24,
+            left: 24,
+            right: 24,
+            child: FilledButton.icon(
+              onPressed: _confirm,
+              style: FilledButton.styleFrom(
+                backgroundColor: forestGreen,
+                foregroundColor: surfaceBase,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.check),
+              label: Text(
+                'VALIDER CETTE POSITION',
+                style: GoogleFonts.karla(
+                  fontSize: 13,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

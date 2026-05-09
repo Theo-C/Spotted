@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -34,6 +36,11 @@ class GeocodingService {
 
   /// Reverse-geocode lat/lng → commune + département via Mapbox Places API.
   /// Renvoie null en cas d'erreur réseau ou si pas de résultats.
+  ///
+  /// Note implémentation : on ne filtre PAS sur `types=place,region,country`
+  /// dans la query car Mapbox peut renvoyer des `place_type` différents selon
+  /// les pays (ex: `district` en France pour le département). On récupère
+  /// tout, on parse côté client.
   Future<GeocodingResult?> reverseGeocode({
     required double lat,
     required double lng,
@@ -44,31 +51,58 @@ class GeocodingService {
         queryParameters: {
           'access_token': Env.mapboxAccessToken,
           'language': 'fr',
-          'types': 'place,region,country',
-          'limit': 5,
+          'limit': 10,
         },
       );
       final features = response.data?['features'] as List?;
-      if (features == null || features.isEmpty) return null;
+      if (features == null) {
+        developer.log(
+          'Geocoding: response has no features. Status=${response.statusCode}',
+          name: 'geocoding',
+        );
+        return null;
+      }
 
       String? place;
       String? region;
       String? country;
+      // On dump le pretty-print des place_types présents pour debug.
+      final summary = <String>[];
       for (final f in features) {
         final m = f as Map<String, dynamic>;
         final placeType = (m['place_type'] as List?)?.cast<String>() ?? [];
         final text = (m['text_fr'] as String?) ?? (m['text'] as String?);
+        summary.add('${placeType.join("|")}=$text');
         if (text == null) continue;
-        if (placeType.contains('place') && place == null) {
+        // Place / commune
+        if ((placeType.contains('place') || placeType.contains('locality')) &&
+            place == null) {
           place = text;
-        } else if (placeType.contains('region') && region == null) {
+        }
+        // Région / département : selon Mapbox, le département français peut
+        // arriver soit en `region` soit en `district`. On essaie les deux.
+        if ((placeType.contains('district') ||
+                placeType.contains('region')) &&
+            region == null) {
           region = text;
-        } else if (placeType.contains('country') && country == null) {
+        }
+        if (placeType.contains('country') && country == null) {
           country = text;
         }
       }
+      developer.log(
+        'Geocoding ($lat,$lng) → features: ${summary.join(", ")} | parsed: place=$place region=$region country=$country',
+        name: 'geocoding',
+      );
       return GeocodingResult(place: place, region: region, country: country);
-    } catch (_) {
+    } on DioException catch (e) {
+      developer.log(
+        'Geocoding network error: ${e.message} (${e.response?.statusCode})',
+        name: 'geocoding',
+      );
+      return null;
+    } catch (e) {
+      developer.log('Geocoding parse error: $e', name: 'geocoding');
       return null;
     }
   }
