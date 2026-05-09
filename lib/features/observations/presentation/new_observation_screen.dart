@@ -1283,7 +1283,7 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
         child: Stack(
           children: [
             MapWidget(
-              cameraOptions: CameraOptions(
+              viewport: CameraViewportState(
                 center: Point(coordinates: Position(widget.lng, widget.lat)),
                 zoom: 11,
               ),
@@ -1433,7 +1433,7 @@ class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
       body: Stack(
         children: [
           MapWidget(
-            cameraOptions: CameraOptions(
+            viewport: CameraViewportState(
               center: Point(coordinates: Position(_lng, _lat)),
               zoom: 12,
             ),

@@ -32,8 +32,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
 
   Future<void> _onMapCreated(MapboxMap map) async {
     _circleManager = await map.annotations.createCircleAnnotationManager();
-    _circleManager!
-        .addOnCircleAnnotationClickListener(_AnnotationClickListener(this));
+    _circleManager!.tapEvents(onTap: _handleAnnotationTap);
     await _renderAnnotations();
   }
 
@@ -79,9 +78,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     return true;
   }
 
-  void _handleAnnotationTap(CircleAnnotation annotation) {
+  bool _handleAnnotationTap(CircleAnnotation annotation) {
     final item = _byAnnotationId[annotation.id];
-    if (item == null) return;
+    if (item == null) return false;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: surfaceBase,
@@ -90,6 +89,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       ),
       builder: (_) => _ObservationDetailSheet(item: item),
     );
+    return true;
   }
 
   static int _rarityColorInt(Rarity? r) {
@@ -141,7 +141,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       body: Stack(
         children: [
           MapWidget(
-            cameraOptions: CameraOptions(
+            viewport: CameraViewportState(
               center: Point(coordinates: Position(2.82, 49.41)),
               zoom: 9.0,
             ),
@@ -166,16 +166,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
         ],
       ),
     );
-  }
-}
-
-class _AnnotationClickListener extends OnCircleAnnotationClickListener {
-  _AnnotationClickListener(this.parent);
-  final _JournalScreenState parent;
-
-  @override
-  void onCircleAnnotationClick(CircleAnnotation annotation) {
-    parent._handleAnnotationTap(annotation);
   }
 }
 
