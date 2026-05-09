@@ -215,6 +215,12 @@ class _NewObservationScreenState
             .read(geocodingServiceProvider)
             .reverseGeocode(lat: _lat!, lng: _lng!);
         final region = geocoding?.region;
+        // Debug temporaire : on trace ce que Mapbox renvoie pour comprendre
+        // pourquoi le blocage ne se déclenchait pas.
+        // ignore: avoid_print
+        debugPrint(
+          'Territory check: lat=$_lat lng=$_lng → place=${geocoding?.place} region=$region country=${geocoding?.country}',
+        );
         if (region != null && region != 'Oise') {
           if (mounted) {
             setState(() {
@@ -1233,22 +1239,14 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
                 ),
               },
             ),
-            // Marker fixe (overlay Flutter), légèrement au-dessus du centre
-            // pour que la pointe touche le centre de la carte.
+            // Marker fixe (overlay Flutter), pointe sur le centre exact de la carte.
             const Center(
               child: Padding(
-                padding: EdgeInsets.only(bottom: 24),
+                padding: EdgeInsets.only(bottom: 32),
                 child: Icon(
-                  Icons.place,
+                  Icons.location_on,
                   color: terracotta,
                   size: 36,
-                  shadows: [
-                    Shadow(
-                      color: Color(0x66000000),
-                      blurRadius: 4,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
                 ),
               ),
             ),
