@@ -56,8 +56,7 @@ class GeocodingService {
       final features = response.data?['features'] as List?;
       if (features == null) {
         debugPrint(
-          'Geocoding: response has no features. Status=${response.statusCode}',
-          name: 'geocoding',
+          '[geocoding] response has no features. Status=${response.statusCode}',
         );
         return null;
       }
