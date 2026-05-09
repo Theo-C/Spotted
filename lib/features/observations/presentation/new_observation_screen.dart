@@ -105,12 +105,28 @@ class _NewObservationScreenState
       final client = ref.read(supabaseClientProvider);
       final oise = await ref.read(oiseZoneProvider.future);
       final speciesId = _selectedSpeciesId!;
-      // TODO Phase 6 — Bloquer si la photo est hors d'une zone curée.
-      // Aujourd'hui : on assigne zone_id = Oise même si la photo est dans l'Aisne ou ailleurs.
-      // Phase 6 : reverse-geocoding via Mapbox → si region != "Oise", bloquer la
-      // validation OU permettre le pinpoint manuel via mini-carte.
-      final lat = _lat ?? 49.41; // centre approximatif Oise
+      final lat = _lat ?? 49.41; // centre approximatif Oise (fallback EXIF absent)
       final lng = _lng ?? 2.82;
+
+      // Détection territoire — bloque si la photo a un GPS hors zones curées.
+      // Photo sans GPS → on garde le fallback Oise (l'utilisateur a accepté le défaut).
+      if (_lat != null && _lng != null) {
+        final geocoding = await ref
+            .read(geocodingServiceProvider)
+            .reverseGeocode(lat: _lat!, lng: _lng!);
+        final region = geocoding?.region;
+        if (region != null && region != 'Oise') {
+          if (mounted) {
+            setState(() {
+              _submitting = false;
+              _error =
+                  'Cette photo est dans « $region ». Seule l\'Oise est curée pour le moment. '
+                  'Choisis une autre photo ou (bientôt) repositionne le marqueur sur la mini-carte.';
+            });
+          }
+          return;
+        }
+      }
 
       // Rareté locale
       final rarityRow = await client
