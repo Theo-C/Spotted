@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -121,8 +123,11 @@ class ProfileScreen extends ConsumerWidget {
       ),
     );
     if (confirmed == true) {
-      await ref.read(authRepositoryProvider).signOut();
-      // go_router redirect → /login automatique via _GoRouterRefreshStream
+      // Fire-and-forget : le _GoRouterRefreshStream écoute authStateChanges
+      // et redirige automatiquement vers /login quand le user devient null.
+      // Awaiter ici provoque un conflit Navigator (_debugLocked) car le
+      // redirect se déclenche pendant que le dialog est encore en pop.
+      unawaited(ref.read(authRepositoryProvider).signOut());
     }
   }
 }
