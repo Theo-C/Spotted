@@ -123,11 +123,12 @@ class ProfileScreen extends ConsumerWidget {
       ),
     );
     if (confirmed == true) {
-      // Fire-and-forget : le _GoRouterRefreshStream écoute authStateChanges
-      // et redirige automatiquement vers /login quand le user devient null.
-      // Awaiter ici provoque un conflit Navigator (_debugLocked) car le
-      // redirect se déclenche pendant que le dialog est encore en pop.
-      unawaited(ref.read(authRepositoryProvider).signOut());
+      // On défère au frame suivant : sinon le redirect auto via
+      // _GoRouterRefreshStream se déclenche pendant le pop du dialog →
+      // Navigator '_debugLocked' assert + black screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(ref.read(authRepositoryProvider).signOut());
+      });
     }
   }
 }
