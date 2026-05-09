@@ -45,12 +45,17 @@ class GeocodingService {
     required double lng,
   }) async {
     try {
+      // Mapbox reverse geocoding refuse limit > 1 sans `types`. On précise
+      // donc tous les types qu'on consomme (country, region, district, place,
+      // locality, postcode) et limit = nb de types.
+      const types = 'country,region,district,place,locality,postcode';
       final response = await _dio.get<Map<String, dynamic>>(
         'https://api.mapbox.com/geocoding/v5/mapbox.places/$lng,$lat.json',
         queryParameters: {
           'access_token': Env.mapboxAccessToken,
           'language': 'fr',
-          'limit': 10,
+          'types': types,
+          'limit': 6,
         },
       );
       final features = response.data?['features'] as List?;
