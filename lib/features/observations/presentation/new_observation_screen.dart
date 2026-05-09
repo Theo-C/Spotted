@@ -1437,11 +1437,19 @@ class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
   double _lat = 0;
   double _lng = 0;
 
+  // Idem que mini-map : on mémoize le viewport pour qu'il ne soit pas
+  // re-appliqué à chaque setState (sinon le zoom user reset à chaque pan).
+  late final CameraViewportState _initialViewport;
+
   @override
   void initState() {
     super.initState();
     _lat = widget.initialLat;
     _lng = widget.initialLng;
+    _initialViewport = CameraViewportState(
+      center: Point(coordinates: Position(widget.initialLng, widget.initialLat)),
+      zoom: 12,
+    );
   }
 
   Future<void> _onMapIdle(MapIdleEventData _) async {
@@ -1493,11 +1501,7 @@ class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
       body: Stack(
         children: [
           MapWidget(
-            viewport: CameraViewportState(
-              center:
-                  Point(coordinates: Position(widget.initialLng, widget.initialLat)),
-              zoom: 12,
-            ),
+            viewport: _initialViewport,
             styleUri: MapboxStyles.OUTDOORS,
             onMapCreated: (m) async {
               _map = m;
