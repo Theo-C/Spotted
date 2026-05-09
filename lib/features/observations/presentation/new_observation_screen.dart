@@ -83,25 +83,29 @@ class _NewObservationScreenState
   }
 
   Future<void> _runIdentification(File file) async {
-    // Récupère le contexte (espèces curées + département) pour enrichir le
-    // prompt et améliorer la précision de l'identification.
-    final oise = await ref.read(oiseZoneProvider.future);
-    final allSpeciesAsync = ref.read(_zoneSpeciesProvider(oise.id).future);
-    final geocodingFuture = (_lat != null && _lng != null)
-        ? ref
-            .read(geocodingServiceProvider)
-            .reverseGeocode(lat: _lat!, lng: _lng!)
-        : Future.value(null);
-    final allSpecies = await allSpeciesAsync;
-    final geocoding = await geocodingFuture;
-    final regionName = geocoding?.region;
+    // Contexte conditionnel selon les coords EXIF :
+    //   - photo avec GPS dans Oise  → région + liste curée (gain max précision)
+    //   - photo avec GPS hors Oise  → région seule (pas de liste curée trompeuse)
+    //   - photo sans GPS            → aucun contexte (mieux que des biais faux)
+    String? regionName;
+    List<({String commonName, String scientificName})>? curated;
 
-    final curated = allSpecies
-        .map((s) => (
-              commonName: s.species.commonName,
-              scientificName: s.species.scientificName,
-            ))
-        .toList();
+    if (_lat != null && _lng != null) {
+      final geocoding = await ref
+          .read(geocodingServiceProvider)
+          .reverseGeocode(lat: _lat!, lng: _lng!);
+      regionName = geocoding?.region;
+      if (regionName == 'Oise') {
+        final oise = await ref.read(oiseZoneProvider.future);
+        final allSpecies = await ref.read(_zoneSpeciesProvider(oise.id).future);
+        curated = allSpecies
+            .map((s) => (
+                  commonName: s.species.commonName,
+                  scientificName: s.species.scientificName,
+                ))
+            .toList();
+      }
+    }
 
     final result = await ref
         .read(speciesIdentificationServiceProvider)

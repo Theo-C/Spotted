@@ -94,6 +94,12 @@ class PhotoPickerService {
           ref: attrs['GPSLongitudeRef'] as String?,
           negativeRef: 'W',
         );
+        // (0, 0) = "Null Island" : tag GPS écrit mais sans fix réel.
+        // Symptôme classique sur certaines apps caméra. On traite comme absent.
+        if (lat == 0 && lng == 0) {
+          lat = null;
+          lng = null;
+        }
       }
       await exif.close();
     } catch (_) {
