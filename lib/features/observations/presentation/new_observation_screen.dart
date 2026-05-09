@@ -29,6 +29,12 @@ import '../data/observed_species_provider.dart';
 import '../data/photo_picker_service.dart';
 import '../data/photo_upload_service.dart';
 
+/// Identification IA désactivée temporairement (Haiku 4.5 pas assez précis sur
+/// la taxonomie ornithologique fine, ex: Grand Corbeau vs Corbeau freux).
+/// À réactiver avec Sonnet 4.6 ou iNaturalist en post-MVP. Le code reste en
+/// place — il suffit de remettre cette constante à true pour réactiver.
+const _iaIdentificationEnabled = false;
+
 /// Écran de saisie d'une nouvelle observation.
 /// Si [preselectedSpeciesId] non nul, l'espèce est verrouillée (cas
 /// "Je l'ai vue !" depuis la fiche). Sinon, l'utilisateur la choisit.
@@ -74,10 +80,11 @@ class _NewObservationScreenState
       if (picked.longitude != null) _lng = picked.longitude;
       _identification = null;
       _suggestionDismissed = false;
-      // Skip l'IA si l'espèce est déjà verrouillée (depuis "Je l'ai vue !").
-      _identifying = widget.preselectedSpeciesId == null;
+      // IA active uniquement si feature flag ON et espèce pas verrouillée.
+      _identifying = _iaIdentificationEnabled &&
+          widget.preselectedSpeciesId == null;
     });
-    if (widget.preselectedSpeciesId == null) {
+    if (_iaIdentificationEnabled && widget.preselectedSpeciesId == null) {
       unawaited(_runIdentification(picked.file));
     }
   }
