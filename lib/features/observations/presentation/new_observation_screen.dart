@@ -25,6 +25,7 @@ import '../../species/data/species_identification_service.dart';
 import '../../species/data/species_repository.dart';
 import '../../species/data/species_with_rarity_provider.dart';
 import '../../species/domain/species_identification.dart';
+import '../../species/presentation/species_photo_picker.dart';
 import '../../territories/data/category_repository.dart';
 import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/territory_progress_provider.dart';
@@ -1190,8 +1191,20 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   late Rarity _selectedRarity;
   bool _submitting = false;
   String? _error;
+  File? _pickedPhoto;
 
   bool get _isManual => widget.candidate == null;
+
+  Future<void> _pickPhoto() async {
+    final picked =
+        await ref.read(photoPickerServiceProvider).pickFromGallery();
+    if (picked == null || !mounted) return;
+    setState(() => _pickedPhoto = picked.file);
+  }
+
+  void _removePhoto() {
+    setState(() => _pickedPhoto = null);
+  }
 
   @override
   void initState() {
@@ -1242,12 +1255,26 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
       final desc =
           _description.text.trim().isEmpty ? null : _description.text.trim();
       final tipsText = _tips.text.trim().isEmpty ? null : _tips.text.trim();
+      // Upload photo (optionnel) avant la création de l'espèce — comme ça
+      // la ligne species naît directement avec son photo_url.
+      String? photoUrl;
+      if (_pickedPhoto != null) {
+        final uploaderId = ref.read(currentAuthUserProvider)?.id;
+        if (uploaderId != null) {
+          photoUrl =
+              await ref.read(photoUploadServiceProvider).uploadSpeciesPhoto(
+                    file: _pickedPhoto!,
+                    uploaderUserId: uploaderId,
+                  );
+        }
+      }
       final created = await ref.read(speciesRepositoryProvider).create(
             commonName: cn,
             scientificName: sn,
             categoryId: _selectedCategoryId!,
             description: desc,
             tips: tipsText,
+            photoUrl: photoUrl,
           );
       // INSERT direct dans species_zones (pas de repo dédié au MVP).
       await ref.read(supabaseClientProvider).from('species_zones').insert({
@@ -1445,6 +1472,16 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                 controller: _tips,
                 hint: 'Où, quand, comment chercher cette espèce…',
                 maxLines: 2,
+              ),
+              const SizedBox(height: 12),
+              _DialogLabel("Photo d'illustration (optionnelle)"),
+              const SizedBox(height: 6),
+              SpeciesPhotoPicker(
+                pickedFile: _pickedPhoto,
+                existingUrl: null,
+                onPick: _pickPhoto,
+                onRemove: _removePhoto,
+                height: 120,
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),

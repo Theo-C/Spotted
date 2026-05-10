@@ -5,7 +5,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../shared/providers/supabase_client_provider.dart';
 
-/// Upload de photos d'observation vers le bucket Supabase Storage 'observations'.
+/// Upload de photos vers Supabase Storage. Deux buckets distincts :
+///  - 'observations' : photo d'une obs précise (1 par obs).
+///  - 'species'      : photo d'illustration d'une espèce du catalogue
+///                     (1 par espèce, partagée entre les obs).
 class PhotoUploadService {
   PhotoUploadService(this._client);
 
@@ -26,6 +29,26 @@ class PhotoUploadService {
           fileOptions: const FileOptions(upsert: false),
         );
     return _client.storage.from('observations').getPublicUrl(path);
+  }
+
+  /// Upload [file] dans le bucket 'species' sous le chemin
+  /// {uploaderUserId}/{timestamp}.{ext}. Renvoie l'URL publique.
+  /// Le path inclut le userId pour la traçabilité (qui a uploadé), mais
+  /// la photo "appartient" logiquement à l'espèce — n'importe qui peut
+  /// la remplacer via l'éditeur.
+  Future<String> uploadSpeciesPhoto({
+    required File file,
+    required String uploaderUserId,
+  }) async {
+    final ext = _extensionOf(file.path);
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final path = '$uploaderUserId/$ts$ext';
+    await _client.storage.from('species').upload(
+          path,
+          file,
+          fileOptions: const FileOptions(upsert: false),
+        );
+    return _client.storage.from('species').getPublicUrl(path);
   }
 
   String _extensionOf(String path) {

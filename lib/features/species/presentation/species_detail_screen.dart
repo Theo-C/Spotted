@@ -87,6 +87,7 @@ class _DetailBody extends StatelessWidget {
             iconKey: categoryIconKey,
             isObserved: isObserved,
             speciesId: detail.species.id,
+            photoUrl: detail.species.photoUrl,
           ),
         ),
         SliverToBoxAdapter(
@@ -189,6 +190,7 @@ class _Hero extends StatelessWidget {
     required this.iconKey,
     required this.isObserved,
     required this.speciesId,
+    required this.photoUrl,
   });
 
   final Rarity rarity;
@@ -196,13 +198,20 @@ class _Hero extends StatelessWidget {
   final bool isObserved;
   final String speciesId;
 
+  /// URL de la photo d'illustration de l'espèce (catalogue). Si présente,
+  /// remplace l'emoji par défaut. Si null, fallback emoji + gradient rareté.
+  final String? photoUrl;
+
   @override
   Widget build(BuildContext context) {
     final color = _rarityColor(rarity);
+    final hasPhoto = photoUrl != null;
     return SizedBox(
       height: 256,
       child: Stack(
         children: [
+          // Fond : gradient rareté toujours en arrière-plan, sert aussi de
+          // fallback si l'image réseau échoue à charger.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -214,17 +223,35 @@ class _Hero extends StatelessWidget {
               ),
             ),
           ),
-          Positioned.fill(
-            child: Center(
-              child: Opacity(
-                opacity: isObserved ? 0.85 : 0.55,
-                child: Text(
-                  emojiForCategory(iconKey),
-                  style: const TextStyle(fontSize: 120),
+          if (hasPhoto)
+            Positioned.fill(
+              child: ColorFiltered(
+                colorFilter: isObserved
+                    ? const ColorFilter.mode(
+                        Colors.transparent, BlendMode.dst)
+                    : ColorFilter.mode(
+                        color.withValues(alpha: 0.35),
+                        BlendMode.darken,
+                      ),
+                child: Image.network(
+                  photoUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            )
+          else
+            Positioned.fill(
+              child: Center(
+                child: Opacity(
+                  opacity: isObserved ? 0.85 : 0.55,
+                  child: Text(
+                    emojiForCategory(iconKey),
+                    style: const TextStyle(fontSize: 120),
+                  ),
                 ),
               ),
             ),
-          ),
           // Fade vers la surface
           Positioned(
             left: 0,

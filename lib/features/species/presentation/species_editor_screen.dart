@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,11 +12,15 @@ import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
 import '../../../shared/models/species.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
+import '../../auth/data/auth_providers.dart';
+import '../../observations/data/photo_picker_service.dart';
+import '../../observations/data/photo_upload_service.dart';
 import '../../territories/data/category_repository.dart';
 import '../../territories/data/territory_progress_provider.dart';
 import '../data/species_detail_provider.dart';
 import '../data/species_repository.dart';
 import '../data/species_with_rarity_provider.dart';
+import 'species_photo_picker.dart';
 
 /// Écran d'ajout / édition d'une espèce dans le catalogue.
 /// - [speciesId] null → création
@@ -40,6 +46,13 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
   bool _submitting = false;
   bool _initialized = false;
   String? _error;
+
+  /// Photo locale fraîchement sélectionnée par l'user (à uploader au submit).
+  /// Null si l'user n'a rien changé : on garde alors [_existingPhotoUrl].
+  File? _pickedPhoto;
+
+  /// URL d'une photo déjà uploadée pour cette espèce (mode édition seulement).
+  String? _existingPhotoUrl;
 
   bool get _isEditing => widget.speciesId != null;
 
@@ -69,6 +82,23 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
       _tips.text = detail.species.tips ?? '';
       _selectedCategoryId = detail.species.categoryId;
       _selectedRarity = detail.rarity;
+      _existingPhotoUrl = detail.species.photoUrl;
+    });
+  }
+
+  Future<void> _pickPhoto() async {
+    final picked =
+        await ref.read(photoPickerServiceProvider).pickFromGallery();
+    if (picked == null || !mounted) return;
+    setState(() {
+      _pickedPhoto = picked.file;
+    });
+  }
+
+  void _removePhoto() {
+    setState(() {
+      _pickedPhoto = null;
+      _existingPhotoUrl = null;
     });
   }
 
@@ -95,6 +125,21 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
       final tipsText =
           _tips.text.trim().isEmpty ? null : _tips.text.trim();
 
+      // Si l'user a sélectionné une nouvelle photo, on l'upload et on
+      // récupère l'URL publique. Sinon on garde l'éventuelle URL existante
+      // (qu'il aura pu mettre à null en cliquant sur "retirer").
+      String? photoUrl = _existingPhotoUrl;
+      if (_pickedPhoto != null) {
+        final uploaderId = ref.read(currentAuthUserProvider)?.id;
+        if (uploaderId != null) {
+          photoUrl =
+              await ref.read(photoUploadServiceProvider).uploadSpeciesPhoto(
+                    file: _pickedPhoto!,
+                    uploaderUserId: uploaderId,
+                  );
+        }
+      }
+
       String speciesId;
       if (_isEditing) {
         // UPDATE de l'espèce existante.
@@ -109,7 +154,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
                 categoryId: _selectedCategoryId!,
                 description: desc,
                 tips: tipsText,
-                photoUrl: original.photoUrl,
+                photoUrl: photoUrl,
                 createdByUserId: original.createdByUserId,
                 createdAt: original.createdAt,
               ),
@@ -130,6 +175,7 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               categoryId: _selectedCategoryId!,
               description: desc,
               tips: tipsText,
+              photoUrl: photoUrl,
             );
         speciesId = created.id;
         await client.from('species_zones').insert({
@@ -296,6 +342,15 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               controller: _tips,
               hint: 'Où, quand, comment chercher cette espèce sur le terrain…',
               maxLines: 3,
+            ),
+            const SizedBox(height: 16),
+            const _Label('Photo d\'illustration (optionnelle)'),
+            const SizedBox(height: 6),
+            SpeciesPhotoPicker(
+              pickedFile: _pickedPhoto,
+              existingUrl: _existingPhotoUrl,
+              onPick: _pickPhoto,
+              onRemove: _removePhoto,
             ),
             if (_error != null) ...[
               const SizedBox(height: 16),
