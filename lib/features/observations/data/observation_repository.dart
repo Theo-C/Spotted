@@ -67,6 +67,12 @@ class ObservationRepository {
     return Observation.fromJson(row);
   }
 
+  /// Supprime une observation. Les RLS (migration 0007) garantissent que
+  /// seul le propriétaire peut supprimer ses obs (user_id = auth.uid()).
+  Future<void> delete(String observationId) async {
+    await _client.from('observations').delete().eq('id', observationId);
+  }
+
   /// Met à jour une observation (cas typique : ajout photo rétroactif → photo_url
   /// + points_earned bumpé). Ne touche pas aux colonnes read-only (id, created_at,
   /// is_first_for_user calculé serveur).

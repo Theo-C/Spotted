@@ -291,9 +291,60 @@ class _NewObservationScreenState
           .select('rarity')
           .eq('species_id', speciesId)
           .eq('zone_id', detectedZone.id)
-          .single();
-      final rarity = Rarity.values
-          .firstWhere((r) => r.name == (rarityRow['rarity'] as String));
+          .maybeSingle();
+      final Rarity rarity;
+      if (rarityRow != null) {
+        rarity = Rarity.values
+            .firstWhere((r) => r.name == (rarityRow['rarity'] as String));
+      } else {
+        // Espèce pas encore curée sur cette zone (ex: Merle noir observé en
+        // Aisne mais seulement listé en Oise). On demande à l'utilisateur de
+        // confirmer la rareté locale, pré-remplie avec celle d'une autre zone
+        // curée si dispo (proba équivalente), sinon `common`. À la confirmation,
+        // on crée le lien species_zones pour que les futures obs ne repassent
+        // pas par ce dialog et que l'espèce apparaisse dans la liste de la zone.
+        final anyZoneRow = await client
+            .from('species_zones')
+            .select('rarity')
+            .eq('species_id', speciesId)
+            .limit(1)
+            .maybeSingle();
+        final defaultRarity = anyZoneRow != null
+            ? Rarity.values.firstWhere(
+                (r) => r.name == (anyZoneRow['rarity'] as String),
+              )
+            : Rarity.common;
+        final speciesForDialog =
+            await ref.read(speciesRepositoryProvider).getById(speciesId);
+        if (!mounted) return;
+        final picked = await showDialog<Rarity>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _PickRarityForZoneDialog(
+            speciesCommonName: speciesForDialog.commonName,
+            zoneName: detectedZone.name,
+            initialRarity: defaultRarity,
+          ),
+        );
+        if (!mounted) return;
+        if (picked == null) {
+          // User a annulé → on stoppe la création d'obs.
+          setState(() {
+            _submitting = false;
+            _error = null;
+          });
+          return;
+        }
+        rarity = picked;
+        await client.from('species_zones').insert({
+          'species_id': speciesId,
+          'zone_id': detectedZone.id,
+          'rarity': rarity.name,
+        });
+        // Le catalogue de la zone vient de changer → invalide les caches qui
+        // listent les espèces curées.
+        ref.invalidate(speciesByCategoryInZoneProvider);
+      }
 
       // is_first_for_user (côté client — le trigger serveur fait l'autorité)
       final existing = await client
@@ -970,10 +1021,160 @@ class _CandidateRow extends StatelessWidget {
   }
 }
 
-class _AddSpeciesDialog extends ConsumerStatefulWidget {
-  const _AddSpeciesDialog({required this.candidate, required this.zoneId});
+/// Dialog déclenché quand on observe une espèce déjà connue mais non encore
+/// curée pour la zone détectée par geocoding (ex: Merle noir présent en Oise
+/// mais pas en Aisne avant cette obs). Demande la rareté locale, pré-remplie
+/// avec celle d'une autre zone si dispo. Renvoie la rareté choisie via
+/// Navigator.pop, ou null si l'utilisateur annule.
+class _PickRarityForZoneDialog extends StatefulWidget {
+  const _PickRarityForZoneDialog({
+    required this.speciesCommonName,
+    required this.zoneName,
+    required this.initialRarity,
+  });
 
-  final SpeciesCandidate candidate;
+  final String speciesCommonName;
+  final String zoneName;
+  final Rarity initialRarity;
+
+  @override
+  State<_PickRarityForZoneDialog> createState() =>
+      _PickRarityForZoneDialogState();
+}
+
+class _PickRarityForZoneDialogState extends State<_PickRarityForZoneDialog> {
+  late Rarity _selected = widget.initialRarity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: surfaceBase,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Première en ${widget.zoneName}',
+                style: GoogleFonts.cormorantGaramond(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  color: forestGreen,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "${widget.speciesCommonName} n'est pas encore curé dans ce territoire. "
+                "Choisis sa rareté locale pour l'ajouter au catalogue.",
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                "RARETÉ DANS ${widget.zoneName.toUpperCase()}",
+                style: GoogleFonts.karla(
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.bold,
+                  color: textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<Rarity>(
+                initialValue: _selected,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: surfaceCard,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFE8E0CE),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                items: Rarity.values
+                    .map(
+                      (r) => DropdownMenuItem(
+                        value: r,
+                        child: Text(_rarityLabel(r)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) =>
+                    v != null ? setState(() => _selected = v) : null,
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(
+                        'Annuler',
+                        style: GoogleFonts.karla(
+                          fontSize: 13,
+                          color: textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(_selected),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: forestGreen,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: Text(
+                        'AJOUTER',
+                        style: GoogleFonts.karla(
+                          fontSize: 12,
+                          letterSpacing: 1.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _rarityLabel(Rarity r) => switch (r) {
+        Rarity.common => 'Commun',
+        Rarity.rare => 'Rare',
+        Rarity.epic => 'Épique',
+        Rarity.legendary => 'Légendaire',
+      };
+}
+
+/// Dialog d'ajout d'une espèce au catalogue d'une zone.
+/// Deux modes :
+///   - Candidat IA fourni → nom et nom scientifique pré-remplis et figés ;
+///     l'utilisateur ne choisit que catégorie + rareté (+ description/tips).
+///   - Pas de candidat (saisie manuelle depuis le picker) → tous les champs
+///     éditables. Cas d'une espèce vraiment nouvelle (jamais observée nulle
+///     part) ; on demande tout pour qu'elle entre proprement dans le catalogue.
+class _AddSpeciesDialog extends ConsumerStatefulWidget {
+  const _AddSpeciesDialog({this.candidate, required this.zoneId});
+
+  final SpeciesCandidate? candidate;
   final String zoneId;
 
   @override
@@ -981,15 +1182,38 @@ class _AddSpeciesDialog extends ConsumerStatefulWidget {
 }
 
 class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
+  late final TextEditingController _commonName;
+  late final TextEditingController _scientificName;
+  late final TextEditingController _description;
+  late final TextEditingController _tips;
   String? _selectedCategoryId;
   late Rarity _selectedRarity;
   bool _submitting = false;
   String? _error;
 
+  bool get _isManual => widget.candidate == null;
+
   @override
   void initState() {
     super.initState();
-    _selectedRarity = _rarityFromKey(widget.candidate.rarityKey);
+    _commonName =
+        TextEditingController(text: widget.candidate?.commonName ?? '');
+    _scientificName =
+        TextEditingController(text: widget.candidate?.scientificName ?? '');
+    _description = TextEditingController();
+    _tips = TextEditingController();
+    _selectedRarity = widget.candidate != null
+        ? _rarityFromKey(widget.candidate!.rarityKey)
+        : Rarity.common;
+  }
+
+  @override
+  void dispose() {
+    _commonName.dispose();
+    _scientificName.dispose();
+    _description.dispose();
+    _tips.dispose();
+    super.dispose();
   }
 
   Rarity _rarityFromKey(String key) {
@@ -1000,6 +1224,12 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   }
 
   Future<void> _submit() async {
+    final cn = _commonName.text.trim();
+    final sn = _scientificName.text.trim();
+    if (cn.isEmpty || sn.isEmpty) {
+      setState(() => _error = 'Nom commun et nom scientifique requis.');
+      return;
+    }
     if (_selectedCategoryId == null) {
       setState(() => _error = 'Choisis une catégorie.');
       return;
@@ -1009,11 +1239,15 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
       _error = null;
     });
     try {
-      final c = widget.candidate;
+      final desc =
+          _description.text.trim().isEmpty ? null : _description.text.trim();
+      final tipsText = _tips.text.trim().isEmpty ? null : _tips.text.trim();
       final created = await ref.read(speciesRepositoryProvider).create(
-            commonName: c.commonName,
-            scientificName: c.scientificName,
+            commonName: cn,
+            scientificName: sn,
             categoryId: _selectedCategoryId!,
+            description: desc,
+            tips: tipsText,
           );
       // INSERT direct dans species_zones (pas de repo dédié au MVP).
       await ref.read(supabaseClientProvider).from('species_zones').insert({
@@ -1042,20 +1276,20 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   @override
   Widget build(BuildContext context) {
     final categoriesAsync = ref.watch(_categoriesProvider);
-    final c = widget.candidate;
+    final candidateCategoryKey = widget.candidate?.categoryKey;
     return Dialog(
       backgroundColor: surfaceBase,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Ajouter cette espèce ?',
+                _isManual ? 'Nouvelle espèce' : 'Ajouter cette espèce ?',
                 style: GoogleFonts.cormorantGaramond(
                   fontSize: 24,
                   fontWeight: FontWeight.w600,
@@ -1064,7 +1298,9 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                "Cette espèce n'est pas encore dans la liste de l'Oise.",
+                _isManual
+                    ? "Saisis les infos de cette espèce — elle entrera dans le catalogue de la zone."
+                    : "Cette espèce n'est pas encore dans le catalogue de la zone.",
                 style: GoogleFonts.karla(
                   fontSize: 12,
                   fontStyle: FontStyle.italic,
@@ -1072,45 +1308,53 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                 ),
               ),
               const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: surfaceCard,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE8E0CE)),
+              if (_isManual) ...[
+                _DialogLabel('Nom commun'),
+                const SizedBox(height: 4),
+                _DialogTextInput(
+                  controller: _commonName,
+                  hint: 'Ex. Buse variable',
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      c.commonName,
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: forestGreen,
-                      ),
-                    ),
-                    Text(
-                      c.scientificName,
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 13,
-                        fontStyle: FontStyle.italic,
-                        color: terracotta,
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 12),
+                _DialogLabel('Nom scientifique'),
+                const SizedBox(height: 4),
+                _DialogTextInput(
+                  controller: _scientificName,
+                  hint: 'Ex. Buteo buteo',
+                  italic: true,
                 ),
-              ),
+              ] else
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: surfaceCard,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE8E0CE)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _commonName.text,
+                        style: GoogleFonts.cormorantGaramond(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: forestGreen,
+                        ),
+                      ),
+                      Text(
+                        _scientificName.text,
+                        style: GoogleFonts.cormorantGaramond(
+                          fontSize: 13,
+                          fontStyle: FontStyle.italic,
+                          color: terracotta,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 14),
-              Text(
-                'CATÉGORIE',
-                style: GoogleFonts.karla(
-                  fontSize: 10,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.bold,
-                  color: textSecondary,
-                ),
-              ),
+              _DialogLabel('Catégorie'),
               const SizedBox(height: 6),
               categoriesAsync.when(
                 loading: () => const SizedBox(
@@ -1122,14 +1366,17 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                   style: GoogleFonts.karla(color: textMuted),
                 ),
                 data: (categories) {
-                  // Pré-sélectionne la catégorie suggérée par l'IA si elle matche.
-                  _selectedCategoryId ??= categories
-                      .cast<model.Category?>()
-                      .firstWhere(
-                        (cat) => cat!.icon == c.categoryKey,
-                        orElse: () => null,
-                      )
-                      ?.id;
+                  // Pré-sélectionne la catégorie suggérée par l'IA si elle matche
+                  // (pas de pré-sélection en mode manuel — c'est à l'user).
+                  if (candidateCategoryKey != null) {
+                    _selectedCategoryId ??= categories
+                        .cast<model.Category?>()
+                        .firstWhere(
+                          (cat) => cat!.icon == candidateCategoryKey,
+                          orElse: () => null,
+                        )
+                        ?.id;
+                  }
                   return DropdownButtonFormField<String>(
                     initialValue: _selectedCategoryId,
                     decoration: InputDecoration(
@@ -1157,15 +1404,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                 },
               ),
               const SizedBox(height: 12),
-              Text(
-                'RARETÉ DANS L\'OISE',
-                style: GoogleFonts.karla(
-                  fontSize: 10,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.bold,
-                  color: textSecondary,
-                ),
-              ),
+              _DialogLabel('Rareté locale'),
               const SizedBox(height: 6),
               DropdownButtonFormField<Rarity>(
                 initialValue: _selectedRarity,
@@ -1190,6 +1429,22 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                     .toList(),
                 onChanged: (v) =>
                     v != null ? setState(() => _selectedRarity = v) : null,
+              ),
+              const SizedBox(height: 12),
+              _DialogLabel('Description (optionnelle)'),
+              const SizedBox(height: 4),
+              _DialogTextInput(
+                controller: _description,
+                hint: 'Habitat, comportement, signes distinctifs…',
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              _DialogLabel('Pour la débusquer (optionnel)'),
+              const SizedBox(height: 4),
+              _DialogTextInput(
+                controller: _tips,
+                hint: 'Où, quand, comment chercher cette espèce…',
+                maxLines: 2,
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
@@ -1269,6 +1524,77 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
 final _categoriesProvider = FutureProvider<List<model.Category>>((ref) async {
   return ref.watch(categoryRepositoryProvider).getAll();
 });
+
+/// Petit label majuscule espacé pour les sections du dialog d'ajout d'espèce.
+class _DialogLabel extends StatelessWidget {
+  const _DialogLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text.toUpperCase(),
+      style: GoogleFonts.karla(
+        fontSize: 10,
+        letterSpacing: 2,
+        fontWeight: FontWeight.bold,
+        color: textSecondary,
+      ),
+    );
+  }
+}
+
+/// TextField stylisé cohérent avec les Dropdown du dialog (même bordure et
+/// fond crème). [maxLines] permet d'agrandir pour description/tips.
+class _DialogTextInput extends StatelessWidget {
+  const _DialogTextInput({
+    required this.controller,
+    required this.hint,
+    this.maxLines = 1,
+    this.italic = false,
+  });
+
+  final TextEditingController controller;
+  final String hint;
+  final int maxLines;
+  final bool italic;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      maxLines: maxLines,
+      style: italic
+          ? GoogleFonts.cormorantGaramond(
+              fontStyle: FontStyle.italic,
+              fontSize: 16,
+              color: textPrimary,
+            )
+          : null,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: GoogleFonts.karla(fontSize: 13, color: textMuted),
+        filled: true,
+        fillColor: surfaceCard,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0xFFE8E0CE), width: 1.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0xFFE8E0CE), width: 1.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: forestGreen, width: 1.5),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+    );
+  }
+}
 
 /// Mini-carte Mapbox dans le form. Le marker terracotta est fixé visuellement
 /// au centre de la carte (overlay Flutter, pas un marker Mapbox). Au drag, la
@@ -1814,6 +2140,74 @@ class _SpeciesPickerSheetState extends ConsumerState<_SpeciesPickerSheet> {
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Bouton pour ajouter une espèce vraiment nouvelle (jamais
+              // observée nulle part). Ouvre _AddSpeciesDialog en mode manuel
+              // (sans candidat IA, tous les champs éditables) et pop le
+              // picker avec l'id de l'espèce créée.
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final newId = await showDialog<String>(
+                      context: context,
+                      builder: (_) => _AddSpeciesDialog(zoneId: widget.zoneId),
+                    );
+                    if (newId != null && mounted) {
+                      ref.invalidate(_zoneSpeciesProvider);
+                      ref.invalidate(speciesByCategoryInZoneProvider);
+                      ref.invalidate(categoriesWithProgressProvider);
+                      if (context.mounted) {
+                        Navigator.of(context).pop(newId);
+                      }
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: surfaceCard,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: forestGreen,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.add_circle_outline,
+                            size: 18, color: forestGreen),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Ajouter une nouvelle espèce',
+                                style: GoogleFonts.karla(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: forestGreen,
+                                ),
+                              ),
+                              Text(
+                                "Pas dans la liste ? Crée-la (nom, catégorie, rareté…).",
+                                style: GoogleFonts.karla(
+                                  fontSize: 11,
+                                  fontStyle: FontStyle.italic,
+                                  color: textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

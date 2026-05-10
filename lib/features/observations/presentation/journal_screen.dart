@@ -10,8 +10,13 @@ import '../../../core/utils/category_icons.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
 import '../../../shared/providers/observer_provider.dart';
+import '../../auth/data/auth_providers.dart';
+import '../../gamification/data/gamification_providers.dart';
 import '../../territories/data/category_repository.dart';
+import '../../territories/data/territory_progress_provider.dart';
+import '../data/observation_repository.dart';
 import '../data/observations_for_map_provider.dart';
+import '../data/observed_species_provider.dart';
 
 class JournalScreen extends ConsumerStatefulWidget {
   const JournalScreen({super.key});
@@ -449,15 +454,81 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _ObservationDetailSheet extends StatelessWidget {
+class _ObservationDetailSheet extends ConsumerWidget {
   const _ObservationDetailSheet({required this.item});
 
   final ObservationOnMap item;
 
+  Future<void> _confirmAndDelete(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      // Sans ça, le dialog s'ouvre sur le root navigator (go_router) et le
+      // pop déstack la route Carnet → black screen + assertion (cf. fix
+      // appliqué sur le logout de profile_screen).
+      useRootNavigator: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: surfaceBase,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Supprimer cette observation ?',
+          style: GoogleFonts.cormorantGaramond(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: forestGreen,
+          ),
+        ),
+        content: Text(
+          'Tu perdras les ${item.obs.pointsEarned} points associés et le marqueur disparaîtra du carnet. Action irréversible.',
+          style: GoogleFonts.karla(fontSize: 13, color: textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(
+              'Annuler',
+              style: GoogleFonts.karla(color: textSecondary),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: terracotta),
+            child: Text(
+              'Supprimer',
+              style: GoogleFonts.karla(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref
+          .read(observationRepositoryProvider)
+          .delete(item.obs.id);
+      // Refresh tout ce qui dépend des obs.
+      ref.invalidate(allObservationsForMapProvider);
+      ref.invalidate(observedSpeciesIdsInZoneProvider);
+      ref.invalidate(categoriesWithProgressProvider);
+      ref.invalidate(zoneProgressProvider);
+      ref.invalidate(accountTotalPointsProvider);
+      ref.invalidate(accountLevelProvider);
+      if (context.mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur de suppression : $e')),
+        );
+      }
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final species = item.species;
     final rarity = item.rarity;
+    final currentUserId = ref.watch(currentAuthUserProvider)?.id;
+    final isOwner = currentUserId != null && item.obs.userId == currentUserId;
     return SafeArea(
       top: false,
       child: Padding(
@@ -551,6 +622,29 @@ class _ObservationDetailSheet extends StatelessWidget {
                 color: textMuted,
               ),
             ),
+            if (isOwner) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: () => _confirmAndDelete(context, ref),
+                icon: const Icon(Icons.delete_outline,
+                    size: 18, color: terracotta),
+                label: Text(
+                  'Supprimer cette observation',
+                  style: GoogleFonts.karla(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: terracotta,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: terracotta, width: 1.5),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
