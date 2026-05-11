@@ -16,16 +16,20 @@ import '../../../core/services/location_service.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
 import '../../../shared/models/species.dart';
+import '../../../shared/models/species_reference.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/points.dart';
 import '../../species/data/species_identification_service.dart';
+import '../../species/data/species_reference_repository.dart';
 import '../../species/data/species_repository.dart';
 import '../../species/data/species_with_rarity_provider.dart';
 import '../../species/domain/species_identification.dart';
+import '../../species/presentation/multi_zone_selector.dart';
 import '../../species/presentation/species_photo_picker.dart';
+import '../../species/presentation/species_reference_autocomplete.dart';
 import '../../territories/data/category_repository.dart';
 import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/territory_progress_provider.dart';
@@ -90,13 +94,23 @@ class _NewObservationScreenState
       _lng = picked.longitude;
       _identification = null;
       _suggestionDismissed = false;
-      // IA active uniquement si feature flag ON et espèce pas verrouillée.
-      _identifying = _iaIdentificationEnabled &&
-          widget.preselectedSpeciesId == null;
+      _identifying = false;
     });
-    if (_iaIdentificationEnabled && widget.preselectedSpeciesId == null) {
-      unawaited(_runIdentification(picked.file));
-    }
+    // L'IA n'est plus auto-lancée au pick — l'user clique sur le bouton
+    // "Identifier avec l'IA" s'il veut une suggestion (cf. _triggerIdentification).
+    // Ça évite la facture quand on connaît déjà l'espèce ou qu'on est offline.
+  }
+
+  /// Déclenche manuellement l'identification IA sur la photo courante.
+  /// Appelé par le bouton "Identifier avec l'IA" qui apparaît tant qu'aucune
+  /// identification n'a tourné pour cette photo.
+  void _triggerIdentification() {
+    if (_photo == null || _identifying || _identification != null) return;
+    setState(() {
+      _identifying = true;
+      _suggestionDismissed = false;
+    });
+    unawaited(_runIdentification(_photo!.file));
   }
 
   Future<void> _runIdentification(File file) async {
@@ -471,6 +485,14 @@ class _NewObservationScreenState
               const SizedBox(height: 12),
               const _NoGpsTipBanner(),
             ],
+            if (_photo != null &&
+                _iaIdentificationEnabled &&
+                widget.preselectedSpeciesId == null &&
+                _identification == null &&
+                !_identifying) ...[
+              const SizedBox(height: 12),
+              _IdentifyWithIaButton(onTap: _triggerIdentification),
+            ],
             if (!_suggestionDismissed && (_identifying || _identification != null)) ...[
               const SizedBox(height: 12),
               _IaSuggestionCard(
@@ -761,6 +783,71 @@ class _NoGpsTipBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Bouton "Identifier avec l'IA" affiché sous le slot photo tant que
+/// l'utilisateur n'a pas déclenché l'identification. Permet de zapper l'appel
+/// IA (et son coût ~0,02€) quand on connaît déjà l'espèce ou qu'on est offline.
+class _IdentifyWithIaButton extends StatelessWidget {
+  const _IdentifyWithIaButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                gold.withValues(alpha: 0.08),
+                gold.withValues(alpha: 0.18),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: gold, width: 1.5),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: gold, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Identifier avec l'IA",
+                      style: GoogleFonts.karla(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: forestGreen,
+                      ),
+                    ),
+                    Text(
+                      'Propose les espèces probables d\'après la photo',
+                      style: GoogleFonts.karla(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: forestGreen, size: 18),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1193,17 +1280,106 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   String? _error;
   File? _pickedPhoto;
 
+  /// Set des zone_id auxquels l'espèce sera liée à la création.
+  /// Initialisé sur la zone passée en param (généralement la zone détectée
+  /// par geocoding), modifiable par l'user via les chips FilterChip.
+  /// Insert species_zones se fait pour chacune avec la même rareté.
+  late final Set<String> _selectedZoneIds = {widget.zoneId};
+
+  /// URL photo récupérée depuis species_reference (iNat-enriched).
+  /// Pré-affichée dans le picker comme photo "existante" ; ré-utilisée
+  /// directement à la création si l'user ne pick pas la sienne (pas
+  /// d'upload, on garde l'URL iNat telle quelle).
+  String? _existingPhotoUrl;
+
+  /// Category key issu de species_reference (birds/mammals/...). Permet
+  /// de pré-sélectionner la catégorie même quand on n'a pas de candidat IA.
+  String? _refCategoryKey;
+
+  /// True si on est en train de chercher dans la banque (UX loader).
+  bool _refLoading = false;
+
   bool get _isManual => widget.candidate == null;
 
   Future<void> _pickPhoto() async {
     final picked =
         await ref.read(photoPickerServiceProvider).pickFromGallery();
     if (picked == null || !mounted) return;
-    setState(() => _pickedPhoto = picked.file);
+    setState(() {
+      _pickedPhoto = picked.file;
+      _existingPhotoUrl = null; // user override la photo référence
+    });
   }
 
   void _removePhoto() {
-    setState(() => _pickedPhoto = null);
+    setState(() {
+      _pickedPhoto = null;
+      _existingPhotoUrl = null;
+    });
+  }
+
+  /// Injecte une entrée species_reference (sélectionnée via l'autocomplete)
+  /// dans les champs du formulaire. commonName est déjà rempli par
+  /// RawAutocomplete via displayStringForOption — on remplit le reste.
+  void _applyReferenceSelection(SpeciesReference entry) {
+    setState(() {
+      _scientificName.text = entry.scientificName;
+      if (_description.text.isEmpty) _description.text = entry.description;
+      if (_tips.text.isEmpty) _tips.text = entry.tips;
+      if (entry.rarityHint != null) {
+        _selectedRarity = Rarity.values.firstWhere(
+          (r) => r.name == entry.rarityHint,
+          orElse: () => _selectedRarity,
+        );
+      }
+      if (entry.photoUrl != null && _pickedPhoto == null) {
+        _existingPhotoUrl = entry.photoUrl;
+      }
+      _refCategoryKey = entry.categoryKey;
+      // Reset pour forcer la re-dérivation depuis _refCategoryKey au build.
+      _selectedCategoryId = null;
+    });
+  }
+
+  /// Lookup dans `species_reference` pour pré-remplir description, tips,
+  /// rareté suggérée, catégorie et photo. Appelé automatiquement à l'init
+  /// si un candidat IA est fourni.
+  /// Idempotent : ne ré-écrit pas les champs déjà remplis par l'user.
+  Future<void> _lookupReference(String scientificName) async {
+    if (_refLoading || scientificName.trim().isEmpty) return;
+    setState(() => _refLoading = true);
+    try {
+      final entry = await ref
+          .read(speciesReferenceRepositoryProvider)
+          .getByScientificName(scientificName.trim());
+      if (!mounted) return;
+      if (entry == null) {
+        setState(() => _refLoading = false);
+        return;
+      }
+      setState(() {
+        _refLoading = false;
+        if (_commonName.text.isEmpty) _commonName.text = entry.commonName;
+        if (_description.text.isEmpty) _description.text = entry.description;
+        if (_tips.text.isEmpty) _tips.text = entry.tips;
+        if (entry.rarityHint != null) {
+          _selectedRarity = Rarity.values.firstWhere(
+            (r) => r.name == entry.rarityHint,
+            orElse: () => _selectedRarity,
+          );
+        }
+        if (entry.photoUrl != null && _pickedPhoto == null) {
+          _existingPhotoUrl = entry.photoUrl;
+        }
+        _refCategoryKey = entry.categoryKey;
+      });
+    } catch (_) {
+      // Lookup silencieux — si ça plante (réseau, etc.), on laisse les
+      // champs vides et l'user remplit à la main.
+      if (mounted) {
+        setState(() => _refLoading = false);
+      }
+    }
   }
 
   @override
@@ -1218,6 +1394,17 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
     _selectedRarity = widget.candidate != null
         ? _rarityFromKey(widget.candidate!.rarityKey)
         : Rarity.common;
+
+    // Si un candidat IA fournit déjà un scientific_name, on cherche dans
+    // la banque species_reference pour pré-remplir description/tips/photo
+    // sans attendre une action user. Lookup async, n'empêche pas le build.
+    final candidateSci = widget.candidate?.scientificName;
+    if (candidateSci != null && candidateSci.isNotEmpty) {
+      // Déféré au prochain frame pour pas faire un setState pendant initState.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _lookupReference(candidateSci);
+      });
+    }
   }
 
   @override
@@ -1247,6 +1434,10 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
       setState(() => _error = 'Choisis une catégorie.');
       return;
     }
+    if (_selectedZoneIds.isEmpty) {
+      setState(() => _error = 'Choisis au moins un territoire.');
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
@@ -1257,6 +1448,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
       final tipsText = _tips.text.trim().isEmpty ? null : _tips.text.trim();
       // Upload photo (optionnel) avant la création de l'espèce — comme ça
       // la ligne species naît directement avec son photo_url.
+      // Priorité : photo pickée par l'user > URL de la banque référence > null.
       String? photoUrl;
       if (_pickedPhoto != null) {
         final uploaderId = ref.read(currentAuthUserProvider)?.id;
@@ -1267,6 +1459,10 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                     uploaderUserId: uploaderId,
                   );
         }
+      } else if (_existingPhotoUrl != null) {
+        // Réutilise directement l'URL iNat de la banque référence — pas
+        // d'upload, on pointe sur le serveur iNat (CC-licensed, stable).
+        photoUrl = _existingPhotoUrl;
       }
       final created = await ref.read(speciesRepositoryProvider).create(
             commonName: cn,
@@ -1276,12 +1472,19 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
             tips: tipsText,
             photoUrl: photoUrl,
           );
-      // INSERT direct dans species_zones (pas de repo dédié au MVP).
-      await ref.read(supabaseClientProvider).from('species_zones').insert({
-        'species_id': created.id,
-        'zone_id': widget.zoneId,
-        'rarity': _selectedRarity.name,
-      });
+      // INSERT species_zones pour chaque territoire coché. Même rareté pour
+      // tous (l'user peut ajuster par-zone plus tard via species_editor).
+      final inserts = _selectedZoneIds
+          .map((zid) => {
+                'species_id': created.id,
+                'zone_id': zid,
+                'rarity': _selectedRarity.name,
+              })
+          .toList();
+      await ref
+          .read(supabaseClientProvider)
+          .from('species_zones')
+          .insert(inserts);
       if (mounted) Navigator.of(context).pop(created.id);
     } on PostgrestException catch (e) {
       if (mounted) {
@@ -1303,7 +1506,9 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   @override
   Widget build(BuildContext context) {
     final categoriesAsync = ref.watch(_categoriesProvider);
-    final candidateCategoryKey = widget.candidate?.categoryKey;
+    // Priorité de pré-sélection : candidat IA > banque référence > rien.
+    final prefillCategoryKey =
+        widget.candidate?.categoryKey ?? _refCategoryKey;
     return Dialog(
       backgroundColor: surfaceBase,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -1336,11 +1541,22 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
               ),
               const SizedBox(height: 16),
               if (_isManual) ...[
-                _DialogLabel('Nom commun'),
+                _DialogLabel('Espèce'),
                 const SizedBox(height: 4),
-                _DialogTextInput(
+                SpeciesReferenceAutocomplete(
                   controller: _commonName,
-                  hint: 'Ex. Buse variable',
+                  onSelected: _applyReferenceSelection,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Tape le nom commun, sélectionne dans la liste : "
+                  "tous les champs se remplissent. Si l'espèce n'est pas "
+                  "dans la banque, remplis manuellement ci-dessous.",
+                  style: GoogleFonts.karla(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: textSecondary,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 _DialogLabel('Nom scientifique'),
@@ -1393,13 +1609,13 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                   style: GoogleFonts.karla(color: textMuted),
                 ),
                 data: (categories) {
-                  // Pré-sélectionne la catégorie suggérée par l'IA si elle matche
-                  // (pas de pré-sélection en mode manuel — c'est à l'user).
-                  if (candidateCategoryKey != null) {
+                  // Pré-sélectionne la catégorie suggérée par l'IA ou par
+                  // la banque species_reference (cf. _refCategoryKey).
+                  if (prefillCategoryKey != null) {
                     _selectedCategoryId ??= categories
                         .cast<model.Category?>()
                         .firstWhere(
-                          (cat) => cat!.icon == candidateCategoryKey,
+                          (cat) => cat!.icon == prefillCategoryKey,
                           orElse: () => null,
                         )
                         ?.id;
@@ -1458,6 +1674,28 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
                     v != null ? setState(() => _selectedRarity = v) : null,
               ),
               const SizedBox(height: 12),
+              _DialogLabel('Territoires'),
+              const SizedBox(height: 6),
+              MultiZoneSelector(
+                selectedIds: _selectedZoneIds,
+                onChanged: (next) => setState(() {
+                  _selectedZoneIds
+                    ..clear()
+                    ..addAll(next);
+                }),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "La rareté ci-dessus s'applique à tous les territoires "
+                "cochés. Tu pourras l'ajuster par territoire plus tard via "
+                "l'édition de l'espèce.",
+                style: GoogleFonts.karla(
+                  fontSize: 10,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+              const SizedBox(height: 12),
               _DialogLabel('Description (optionnelle)'),
               const SizedBox(height: 4),
               _DialogTextInput(
@@ -1478,7 +1716,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
               const SizedBox(height: 6),
               SpeciesPhotoPicker(
                 pickedFile: _pickedPhoto,
-                existingUrl: null,
+                existingUrl: _existingPhotoUrl,
                 onPick: _pickPhoto,
                 onRemove: _removePhoto,
                 height: 120,
@@ -1561,6 +1799,7 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
 final _categoriesProvider = FutureProvider<List<model.Category>>((ref) async {
   return ref.watch(categoryRepositoryProvider).getAll();
 });
+
 
 /// Petit label majuscule espacé pour les sections du dialog d'ajout d'espèce.
 class _DialogLabel extends StatelessWidget {

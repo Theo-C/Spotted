@@ -1,13 +1,20 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/utils/category_icons.dart';
 import '../../../shared/models/rarity.dart';
+import '../../auth/data/auth_providers.dart';
 import '../../gamification/domain/points.dart';
+import '../../observations/data/observations_for_map_provider.dart';
 import '../../observations/data/observed_species_provider.dart';
+import '../../observations/presentation/observation_detail_sheet.dart';
+import '../../territories/data/geocoding_service.dart';
 import '../../territories/data/category_repository.dart';
 import '../data/species_detail_provider.dart';
 import '../data/species_with_rarity_provider.dart';
@@ -153,6 +160,10 @@ class _DetailBody extends StatelessWidget {
                     height: 1.5,
                   ),
                 ),
+                if (isObserved) ...[
+                  const SizedBox(height: 20),
+                  _MyObservationsSection(speciesId: detail.species.id),
+                ],
                 if (!isObserved && detail.species.tips != null) ...[
                   const SizedBox(height: 16),
                   _SpottingTipsCard(
@@ -223,24 +234,40 @@ class _Hero extends StatelessWidget {
               ),
             ),
           ),
-          if (hasPhoto)
+          if (hasPhoto) ...[
+            // Backdrop : photo en cover et floutée pour remplir tout le hero.
+            // Évite les bandes mortes des photos portrait/carrées tout en
+            // gardant un fond cohérent qui reprend les couleurs de l'image.
             Positioned.fill(
-              child: ColorFiltered(
-                colorFilter: isObserved
-                    ? const ColorFilter.mode(
-                        Colors.transparent, BlendMode.dst)
-                    : ColorFilter.mode(
-                        color.withValues(alpha: 0.35),
-                        BlendMode.darken,
-                      ),
+              child: ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
                 child: Image.network(
                   photoUrl!,
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => const SizedBox.shrink(),
                 ),
               ),
-            )
-          else
+            ),
+            // Voile rareté entre backdrop et foreground — signal "à débusquer"
+            // visible dans les marges autour de la photo nette.
+            if (!isObserved)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.25),
+                  ),
+                ),
+              ),
+            // Foreground : photo nette en contain, animal toujours visible
+            // dans son entier, recadrage non destructif.
+            Positioned.fill(
+              child: Image.network(
+                photoUrl!,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
+          ] else
             Positioned.fill(
               child: Center(
                 child: Opacity(
@@ -252,22 +279,6 @@ class _Hero extends StatelessWidget {
                 ),
               ),
             ),
-          // Fade vers la surface
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 48,
-            child: const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, surfaceBase],
-                ),
-              ),
-            ),
-          ),
           // Back button
           Positioned(
             top: 16,
@@ -624,6 +635,235 @@ class _ObserveButton extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Liste les observations de l'utilisateur courant pour cette espèce.
+/// Affichée sur la fiche détail dès qu'au moins une obs existe (isObserved).
+/// Triée par date croissante — la 1ʳᵉ obs porte un badge "1ʳᵉ".
+class _MyObservationsSection extends ConsumerWidget {
+  const _MyObservationsSection({required this.speciesId});
+
+  final String speciesId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final allObsAsync = ref.watch(allObservationsForMapProvider);
+    final currentUserId = ref.watch(currentAuthUserProvider)?.id;
+    if (currentUserId == null) return const SizedBox.shrink();
+
+    return allObsAsync.when(
+      loading: () => const SizedBox(
+        height: 40,
+        child: Center(
+          child: SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 1.5),
+          ),
+        ),
+      ),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (all) {
+        final mine = all
+            .where((i) =>
+                i.obs.speciesId == speciesId && i.obs.userId == currentUserId)
+            .toList()
+          ..sort((a, b) => a.obs.observedAt.compareTo(b.obs.observedAt));
+        if (mine.isEmpty) return const SizedBox.shrink();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'MES OBSERVATIONS · ${mine.length}',
+              style: GoogleFonts.karla(
+                fontSize: 10,
+                letterSpacing: 2.5,
+                fontWeight: FontWeight.bold,
+                color: textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            for (var i = 0; i < mine.length; i++) ...[
+              _MyObservationCard(item: mine[i]),
+              if (i < mine.length - 1) const SizedBox(height: 8),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MyObservationCard extends ConsumerWidget {
+  const _MyObservationCard({required this.item});
+
+  final ObservationOnMap item;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isFirst = item.obs.isFirstForUser;
+    final hasPhoto = item.obs.photoUrl != null;
+    final geocodingAsync = ref.watch(
+      reverseGeocodingProvider(
+        (lat: item.obs.latitude, lng: item.obs.longitude),
+      ),
+    );
+    // Priorité d'affichage : commune (compact pour la carte) > displayName
+    // complet > fallback coords courts pendant le chargement / erreur réseau.
+    final placeText = geocodingAsync.asData?.value?.place ??
+        geocodingAsync.asData?.value?.displayName ??
+        '${item.obs.latitude.toStringAsFixed(4)}, '
+            '${item.obs.longitude.toStringAsFixed(4)}';
+    return GestureDetector(
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: surfaceBase,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (_) => ObservationDetailSheet(
+          item: item,
+          // On est déjà sur la fiche détail de l'espèce → masquer le bouton
+          // "Voir la fiche d'espèce" qui serait redondant.
+          showOpenSpeciesButton: false,
+        ),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: isFirst ? forestGreen : surfaceCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isFirst ? forestGreen : const Color(0xFFE8E0CE),
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: hasPhoto
+                  ? Image.network(
+                      item.obs.photoUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => _ThumbFallback(
+                        isFirst: isFirst,
+                        icon: Icons.broken_image_outlined,
+                      ),
+                    )
+                  : _ThumbFallback(
+                      isFirst: isFirst,
+                      icon: Icons.location_on,
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    if (isFirst) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: goldLight,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '1ʳᵉ',
+                          style: GoogleFonts.karla(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: forestGreen,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Flexible(
+                      child: Text(
+                        DateFormat('d MMM yyyy', 'fr')
+                            .format(item.obs.observedAt),
+                        style: GoogleFonts.cormorantGaramond(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: isFirst ? surfaceBase : forestGreen,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.place_outlined,
+                      size: 11,
+                      color: isFirst
+                          ? const Color(0xFFC4A572)
+                          : textMuted,
+                    ),
+                    const SizedBox(width: 2),
+                    Flexible(
+                      child: Text(
+                        placeText,
+                        style: GoogleFonts.karla(
+                          fontSize: 10,
+                          color: isFirst
+                              ? const Color(0xFFC4A572)
+                              : textMuted,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '+${item.obs.pointsEarned}',
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: isFirst ? goldLight : gold,
+            ),
+          ),
+        ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThumbFallback extends StatelessWidget {
+  const _ThumbFallback({required this.isFirst, required this.icon});
+
+  final bool isFirst;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: isFirst ? surfaceBase.withValues(alpha: 0.15) : surfaceMuted,
+      alignment: Alignment.center,
+      child: Icon(
+        icon,
+        size: 18,
+        color: isFirst ? goldLight : textSecondary,
       ),
     );
   }

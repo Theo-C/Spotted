@@ -11,6 +11,7 @@ import '../../../core/utils/category_icons.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
 import '../../../shared/models/species.dart';
+import '../../../shared/models/species_reference.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../observations/data/photo_picker_service.dart';
@@ -20,7 +21,9 @@ import '../../territories/data/territory_progress_provider.dart';
 import '../data/species_detail_provider.dart';
 import '../data/species_repository.dart';
 import '../data/species_with_rarity_provider.dart';
+import 'multi_zone_selector.dart';
 import 'species_photo_picker.dart';
+import 'species_reference_autocomplete.dart';
 
 /// Écran d'ajout / édition d'une espèce dans le catalogue.
 /// - [speciesId] null → création
@@ -51,10 +54,56 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
   /// Null si l'user n'a rien changé : on garde alors [_existingPhotoUrl].
   File? _pickedPhoto;
 
-  /// URL d'une photo déjà uploadée pour cette espèce (mode édition seulement).
+  /// URL d'une photo déjà uploadée pour cette espèce (mode édition seulement,
+  /// ou pré-remplie depuis species_reference en création).
   String? _existingPhotoUrl;
 
+  /// Category key pré-sélectionnée depuis species_reference après autocomplete.
+  /// Utilisée pour matcher avec la categories list au build.
+  String? _refCategoryKey;
+
+  /// Zone IDs auxquelles l'espèce sera liée à la création (chips Multi).
+  /// Pré-rempli avec Oise par défaut au prochain frame (cf. initState).
+  final Set<String> _selectedZoneIds = {};
+
   bool get _isEditing => widget.speciesId != null;
+
+  @override
+  void initState() {
+    super.initState();
+    // En création, pré-sélectionne Oise comme territoire par défaut.
+    // L'user peut le décocher et/ou cocher Aisne ou d'autres zones.
+    if (!_isEditing) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final oise = await ref.read(oiseZoneProvider.future);
+        if (mounted && _selectedZoneIds.isEmpty) {
+          setState(() => _selectedZoneIds.add(oise.id));
+        }
+      });
+    }
+  }
+
+  /// Pré-remplit le formulaire depuis une entrée species_reference
+  /// sélectionnée via l'autocomplete. commonName est déjà rempli (par
+  /// le controller piloté par RawAutocomplete) — on remplit le reste.
+  void _applyReferenceSelection(SpeciesReference entry) {
+    setState(() {
+      _scientificName.text = entry.scientificName;
+      if (_description.text.isEmpty) _description.text = entry.description;
+      if (_tips.text.isEmpty) _tips.text = entry.tips;
+      if (entry.rarityHint != null) {
+        _selectedRarity = Rarity.values.firstWhere(
+          (r) => r.name == entry.rarityHint,
+          orElse: () => _selectedRarity,
+        );
+      }
+      if (entry.photoUrl != null && _pickedPhoto == null) {
+        _existingPhotoUrl = entry.photoUrl;
+      }
+      _refCategoryKey = entry.categoryKey;
+      _selectedCategoryId = null; // forcera la re-dérivation depuis _refCategoryKey
+    });
+  }
 
   @override
   void dispose() {
@@ -111,6 +160,10 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
     }
     if (_selectedCategoryId == null) {
       setState(() => _error = 'Choisis une catégorie.');
+      return;
+    }
+    if (!_isEditing && _selectedZoneIds.isEmpty) {
+      setState(() => _error = 'Choisis au moins un territoire.');
       return;
     }
     setState(() {
@@ -178,11 +231,16 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               photoUrl: photoUrl,
             );
         speciesId = created.id;
-        await client.from('species_zones').insert({
-          'species_id': speciesId,
-          'zone_id': oise.id,
-          'rarity': _selectedRarity.name,
-        });
+        // Une ligne species_zones par territoire coché, même rareté pour tous
+        // (l'user pourra ajuster par territoire plus tard via l'édition).
+        final inserts = _selectedZoneIds
+            .map((zid) => {
+                  'species_id': speciesId,
+                  'zone_id': zid,
+                  'rarity': _selectedRarity.name,
+                })
+            .toList();
+        await client.from('species_zones').insert(inserts);
       }
 
       // Invalide les caches qui dépendent du catalogue.
@@ -196,8 +254,14 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
         if (_isEditing) {
           context.pop();
         } else {
+          // Navigue vers la fiche détail dans le 1er territoire coché (Oise
+          // si elle est cochée, sinon le 1er de la liste — l'ordre est
+          // stable car Set préserve l'ordre d'insertion en Dart).
+          final firstZone = _selectedZoneIds.contains(oise.id)
+              ? oise.id
+              : _selectedZoneIds.first;
           context.go(
-            '/territory/${oise.id}/category/${_selectedCategoryId!}/species/$speciesId',
+            '/territory/$firstZone/category/${_selectedCategoryId!}/species/$speciesId',
           );
         }
       }
@@ -252,15 +316,32 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _Label('Nom commun'),
+            _Label(_isEditing ? 'Nom commun' : 'Espèce'),
             const SizedBox(height: 6),
-            _TextInput(
-              controller: _commonName,
-              hint: 'Ex : Buse variable',
-              autofocus: !_isEditing,
-              textInputAction: TextInputAction.next,
-              readOnly: _isEditing,
-            ),
+            if (_isEditing)
+              _TextInput(
+                controller: _commonName,
+                hint: 'Ex : Buse variable',
+                textInputAction: TextInputAction.next,
+                readOnly: true,
+              )
+            else ...[
+              SpeciesReferenceAutocomplete(
+                controller: _commonName,
+                onSelected: _applyReferenceSelection,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                "Tape le nom commun, sélectionne dans la liste : tous les "
+                "champs se remplissent. Si l'espèce n'est pas dans la banque, "
+                "remplis manuellement le reste.",
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             const _Label('Nom scientifique'),
             const SizedBox(height: 6),
@@ -291,16 +372,30 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
                 'Catégories indisponibles',
                 style: GoogleFonts.karla(color: textMuted),
               ),
-              data: (cats) => _CategoryPicker(
-                categories: cats,
-                selectedId: _selectedCategoryId,
-                onChanged: (id) => setState(() => _selectedCategoryId = id),
-              ),
+              data: (cats) {
+                // En création, pré-sélectionne la catégorie depuis
+                // species_reference si une espèce a été choisie via l'autocomplete.
+                if (!_isEditing && _refCategoryKey != null) {
+                  _selectedCategoryId ??= cats
+                      .cast<model.Category?>()
+                      .firstWhere(
+                        (c) => c!.icon == _refCategoryKey,
+                        orElse: () => null,
+                      )
+                      ?.id;
+                }
+                return _CategoryPicker(
+                  categories: cats,
+                  selectedId: _selectedCategoryId,
+                  onChanged: (id) =>
+                      setState(() => _selectedCategoryId = id),
+                );
+              },
             ),
             const SizedBox(height: 16),
             Row(
               children: [
-                const _Label('Rareté dans l\'Oise'),
+                _Label(_isEditing ? "Rareté dans l'Oise" : 'Rareté'),
                 if (rarityLocked) ...[
                   const SizedBox(width: 6),
                   const Icon(Icons.lock_outline,
@@ -324,6 +419,30 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
                   fontSize: 11,
                   fontStyle: FontStyle.italic,
                   color: textMuted,
+                ),
+              ),
+            ],
+            if (!_isEditing) ...[
+              const SizedBox(height: 16),
+              const _Label('Territoires'),
+              const SizedBox(height: 6),
+              MultiZoneSelector(
+                selectedIds: _selectedZoneIds,
+                onChanged: (next) => setState(() {
+                  _selectedZoneIds
+                    ..clear()
+                    ..addAll(next);
+                }),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "Coche les territoires où l'espèce est présente. La rareté "
+                "ci-dessus s'applique aux territoires cochés (modifiable par "
+                "territoire plus tard via l'édition).",
+                style: GoogleFonts.karla(
+                  fontSize: 10,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
                 ),
               ),
             ],
@@ -446,7 +565,6 @@ class _TextInput extends StatelessWidget {
     required this.hint,
     this.italic = false,
     this.maxLines = 1,
-    this.autofocus = false,
     this.textInputAction,
     this.readOnly = false,
   });
@@ -455,7 +573,6 @@ class _TextInput extends StatelessWidget {
   final String hint;
   final bool italic;
   final int maxLines;
-  final bool autofocus;
   final TextInputAction? textInputAction;
   final bool readOnly;
 
@@ -470,7 +587,6 @@ class _TextInput extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
       child: TextField(
         controller: controller,
-        autofocus: autofocus,
         readOnly: readOnly,
         textInputAction: textInputAction,
         maxLines: maxLines,

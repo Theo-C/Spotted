@@ -53,15 +53,18 @@ class SpeciesPhotoPicker extends StatelessWidget {
                 color: hasPhoto ? forestGreen : const Color(0xFFC4A572),
                 width: 2,
               ),
+              // contain plutôt que cover : on veut toujours voir l'animal en
+              // entier, même si la photo est portrait sur un slot paysage.
+              // Le surfaceCard derrière (cf. color) reste visible en bandes.
               image: pickedFile != null
                   ? DecorationImage(
                       image: FileImage(pickedFile!),
-                      fit: BoxFit.cover,
+                      fit: BoxFit.contain,
                     )
                   : (existingUrl != null
                       ? DecorationImage(
                           image: NetworkImage(existingUrl!),
-                          fit: BoxFit.cover,
+                          fit: BoxFit.contain,
                         )
                       : null),
             ),
