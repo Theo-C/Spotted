@@ -21,6 +21,7 @@ import '../../../shared/models/zone.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../gamification/data/gamification_providers.dart';
+import '../../gamification/data/gamification_state_provider.dart';
 import '../../gamification/domain/points.dart';
 import '../../species/data/species_identification_service.dart';
 import '../../species/data/species_reference_repository.dart';
@@ -380,10 +381,15 @@ class _NewObservationScreenState
                 );
       }
 
+      // Multiplicateur de série courante (1.0 si pas encore au palier J7).
+      // Lu AVANT l'insertion : on récompense la série qui a amené ici, pas
+      // celle qui inclura cette obs.
+      final streak = ref.read(streakProvider);
       final pointsEarned = observationPoints(
         rarity: rarity,
         isFirst: isFirst,
         hasPhoto: photoUrl != null,
+        streakMultiplier: streak.xpMultiplier,
       );
 
       await ref.read(observationRepositoryProvider).create(
