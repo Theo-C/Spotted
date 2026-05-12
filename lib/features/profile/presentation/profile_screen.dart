@@ -11,6 +11,8 @@ import '../../auth/data/auth_providers.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../../core/services/notifications_service.dart';
 import '../../gamification/data/gamification_providers.dart';
+import '../../gamification/data/gamification_state_provider.dart';
+import '../../gamification/domain/badge.dart';
 import '../../gamification/domain/level.dart';
 import '../../gamification/presentation/badges_section.dart';
 import '../../observations/data/observations_for_map_provider.dart';
@@ -57,15 +59,13 @@ class ProfileScreen extends ConsumerWidget {
               const SizedBox(height: 8),
               _AuthEmailLine(email: currentAuthUser!.email!),
             ],
-            const SizedBox(height: 20),
-            const _SectionLabel('Statistiques'),
-            const SizedBox(height: 8),
-            _StatsGrid(allObsAsync: myObsAsync),
-            const SizedBox(height: 24),
-            const BadgesSection(),
-            const SizedBox(height: 24),
-            const Divider(color: Color(0xFFE8E0CE)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
+            _StatsRow(allObsAsync: myObsAsync),
+            const SizedBox(height: 14),
+            const _BadgesTeaser(),
+            const SizedBox(height: 18),
+            const _SectionLabel('Réglages'),
+            const SizedBox(height: 4),
             const _StreakNotifsTile(),
             _SettingsTile(
               icon: Icons.logout,
@@ -331,15 +331,17 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.allObsAsync});
+/// Rangée compacte de 4 mini-stats — remplace l'ancienne grid 2×2.
+/// 1 seule ligne, chiffres + label uppercase, gain de place vertical important.
+class _StatsRow extends StatelessWidget {
+  const _StatsRow({required this.allObsAsync});
 
   final AsyncValue<List<ObservationOnMap>> allObsAsync;
 
   @override
   Widget build(BuildContext context) {
     return allObsAsync.when(
-      loading: () => const SizedBox(height: 160),
+      loading: () => const SizedBox(height: 72),
       error: (e, _) => Text(
         'Stats indisponibles',
         style: GoogleFonts.karla(color: textMuted),
@@ -351,101 +353,260 @@ class _StatsGrid extends StatelessWidget {
         final withPhoto = items.where((i) => i.obs.photoUrl != null).length;
         final legendary =
             items.where((i) => i.rarity == Rarity.legendary).length;
-        return GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 1.6,
-          children: [
-            _StatTile(
-              icon: Icons.pets,
-              value: '$speciesObserved',
-              label: 'Espèces vues',
-              color: forestGreen,
-            ),
-            _StatTile(
-              icon: Icons.place_outlined,
-              value: '$totalObs',
-              label: 'Observations',
-              color: terracotta,
-            ),
-            _StatTile(
-              icon: Icons.camera_alt_outlined,
-              value: '$withPhoto',
-              label: 'Avec photo',
-              color: gold,
-            ),
-            _StatTile(
-              icon: Icons.auto_awesome,
-              value: '$legendary',
-              label: 'Légendaires',
-              color: rarityLegendary,
-            ),
-          ],
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+          decoration: BoxDecoration(
+            color: surfaceCard,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _MiniStat(
+                value: '$speciesObserved',
+                label: 'ESPÈCES',
+                color: forestGreen,
+              ),
+              _StatDivider(),
+              _MiniStat(
+                value: '$totalObs',
+                label: 'OBS',
+                color: terracotta,
+              ),
+              _StatDivider(),
+              _MiniStat(
+                value: '$withPhoto',
+                label: 'PHOTOS',
+                color: gold,
+              ),
+              _StatDivider(),
+              _MiniStat(
+                value: '$legendary',
+                label: 'LÉGEND.',
+                color: rarityLegendary,
+              ),
+            ],
+          ),
         );
       },
     );
   }
 }
 
-class _StatTile extends StatelessWidget {
-  const _StatTile({
-    required this.icon,
+class _MiniStat extends StatelessWidget {
+  const _MiniStat({
     required this.value,
     required this.label,
     required this.color,
   });
 
-  final IconData icon;
   final String value;
   final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: surfaceCard,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Icon(icon, size: 18, color: color),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                value,
-                style: GoogleFonts.cormorantGaramond(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w600,
-                  color: forestGreen,
-                  height: 1.0,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label.toUpperCase(),
-                  style: GoogleFonts.karla(
-                    fontSize: 9,
-                    letterSpacing: 1.2,
-                    fontWeight: FontWeight.bold,
-                    color: textSecondary,
-                  ),
-                ),
-              ),
-            ],
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: GoogleFonts.cormorantGaramond(
+            fontSize: 26,
+            fontWeight: FontWeight.w600,
+            color: color,
+            height: 1.0,
           ),
-        ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: GoogleFonts.karla(
+            fontSize: 9,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.bold,
+            color: textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 28,
+      color: const Color(0xFFE8E0CE),
+    );
+  }
+}
+
+/// Carte "teaser" badges : compteur + 4 derniers débloqués + tap pour ouvrir
+/// la grille complète dans un bottom sheet plein écran.
+class _BadgesTeaser extends ConsumerWidget {
+  const _BadgesTeaser();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final badgesAsync = ref.watch(badgesProvider);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openBadgesSheet(context),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: surfaceCard,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
+          ),
+          child: badgesAsync.when(
+            loading: () => const SizedBox(
+              height: 48,
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: forestGreen),
+                ),
+              ),
+            ),
+            error: (e, _) => Row(
+              children: [
+                const Icon(Icons.error_outline,
+                    size: 18, color: terracotta),
+                const SizedBox(width: 10),
+                Text(
+                  'Badges indisponibles',
+                  style: GoogleFonts.karla(color: textMuted),
+                ),
+              ],
+            ),
+            data: (statuses) {
+              final earned =
+                  statuses.where((b) => b.isEarned).toList()
+                    ..sort((a, b) => b.earnedAt!.compareTo(a.earnedAt!));
+              final preview = earned.take(4).toList();
+              return Row(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'BADGES',
+                        style: GoogleFonts.karla(
+                          fontSize: 10,
+                          letterSpacing: 2.5,
+                          fontWeight: FontWeight.bold,
+                          color: textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${earned.length} / ${statuses.length}',
+                        style: GoogleFonts.cormorantGaramond(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          color: forestGreen,
+                          height: 1.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: preview.isEmpty
+                        ? Text(
+                            'Pas encore débloqué',
+                            style: GoogleFonts.karla(
+                              fontSize: 11,
+                              fontStyle: FontStyle.italic,
+                              color: textMuted,
+                            ),
+                          )
+                        : Row(
+                            children: [
+                              for (final s in preview) ...[
+                                _BadgePreviewBubble(badge: s),
+                                const SizedBox(width: 6),
+                              ],
+                            ],
+                          ),
+                  ),
+                  const Icon(Icons.chevron_right,
+                      size: 22, color: forestGreen),
+                ],
+              );
+            },
+          ),
+        ),
       ),
+    );
+  }
+
+  void _openBadgesSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: surfaceBase,
+      useRootNavigator: false,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (_, scrollCtrl) => Column(
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8E0CE),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                controller: scrollCtrl,
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                child: const BadgesSection(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BadgePreviewBubble extends StatelessWidget {
+  const _BadgePreviewBubble({required this.badge});
+
+  final BadgeStatus badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: surfaceMuted,
+        shape: BoxShape.circle,
+        border: Border.all(color: gold.withValues(alpha: 0.6), width: 1.2),
+      ),
+      alignment: Alignment.center,
+      child: Text(badge.def.icon, style: const TextStyle(fontSize: 18)),
     );
   }
 }
