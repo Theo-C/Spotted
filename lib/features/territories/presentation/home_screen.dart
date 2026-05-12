@@ -7,11 +7,21 @@ import '../../../app/theme.dart';
 import '../../../core/utils/env.dart';
 import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
+import '../../gamification/data/gamification_state_provider.dart';
 import '../../gamification/domain/level.dart';
+import '../../gamification/domain/streak.dart';
 import '../../gamification/presentation/badge_unlock_overlay.dart';
 import '../../gamification/presentation/daily_quests_section.dart';
-import '../../gamification/presentation/streak_card.dart';
 import '../data/territory_progress_provider.dart';
+
+/// Config d'affichage par zone — donne le centre de la mini-carte statique,
+/// le tag ("DOMICILE" / "VOISIN") et la couleur de tag. Garder en local
+/// tant que ces métadonnées ne sont pas en BDD ; à terme on les passe sur
+/// la table zones (ex: home_center_lat, home_center_lng, display_tag).
+const _zoneDisplay = <String, ({double lat, double lng, String tag, Color tagColor})>{
+  '60': (lat: 49.41, lng: 2.82, tag: 'DOMICILE', tagColor: forestGreen),
+  '02': (lat: 49.45, lng: 3.62, tag: 'VOISIN',   tagColor: terracotta),
+};
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -27,36 +37,17 @@ class HomeScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const _Header(),
-                const SizedBox(height: 12),
-                const StreakCard(),
+                const SizedBox(height: 14),
+                _ProgressHeader(
+                  levelAsync: ref.watch(accountLevelProvider),
+                  streak: ref.watch(streakProvider),
+                ),
                 const SizedBox(height: 12),
                 const DailyQuestsSection(),
-                const SizedBox(height: 12),
-                _LevelCard(levelAsync: ref.watch(accountLevelProvider)),
                 const SizedBox(height: 20),
                 const _SectionLabel(text: 'Mes terrains'),
                 const SizedBox(height: 8),
-                _TerritoryCard(
-                  shortCode: '60',
-                  displayName: 'Oise',
-                  badge: 'DOMICILE',
-                  badgeColor: forestGreen,
-                  centerLat: 49.41,
-                  centerLng: 2.82,
-                  progressAsync: ref.watch(zoneProgressProvider('60')),
-                  zoneAsync: ref.watch(zoneByShortCodeProvider('60')),
-                ),
-                const SizedBox(height: 12),
-                _TerritoryCard(
-                  shortCode: '02',
-                  displayName: 'Aisne',
-                  badge: 'VOISIN',
-                  badgeColor: terracotta,
-                  centerLat: 49.45,
-                  centerLng: 3.62,
-                  progressAsync: ref.watch(zoneProgressProvider('02')),
-                  zoneAsync: ref.watch(zoneByShortCodeProvider('02')),
-                ),
+                _TerritoriesList(zonesAsync: ref.watch(allZonesProvider)),
                 const SizedBox(height: 24),
               ],
             ),
@@ -67,7 +58,66 @@ class HomeScreen extends ConsumerWidget {
   }
 }
 
-/// Menu d'ajout (bottom sheet) au tap du bouton + sur la home.
+// =============================================================
+// _Header — titre app + bouton +
+// =============================================================
+
+class _Header extends StatelessWidget {
+  const _Header();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'CARNET NATURALISTE',
+                  style: GoogleFonts.karla(
+                    fontSize: 11,
+                    letterSpacing: 2.5,
+                    fontWeight: FontWeight.bold,
+                    color: terracotta,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Spotted',
+                  style: GoogleFonts.cormorantGaramond(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w500,
+                    color: forestGreen,
+                    height: 1.05,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Material(
+            color: forestGreen,
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => _showAddMenu(context),
+              child: const SizedBox(
+                // 48×48 minimum pour la cible tactile Material (vs 36 avant).
+                width: 48,
+                height: 48,
+                child: Icon(Icons.add, color: surfaceBase, size: 22),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Future<void> _showAddMenu(BuildContext context) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -164,72 +214,32 @@ class _AddMenuTile extends StatelessWidget {
   }
 }
 
-class _Header extends StatelessWidget {
-  const _Header();
+// =============================================================
+// _ProgressHeader — fusion Niveau + Streak en une seule carte
+// =============================================================
+//
+// v5 affichait 2 cartes séparées (StreakCard + _LevelCard) qui se faisaient
+// concurrence visuellement et bouffaient ~200 px. Ici une seule carte
+// gradient forestGreen avec :
+//   - Pastille de niveau + label "Niveau N" + barre de progression XP
+//   - Bloc streak à droite : flamme animée + nb de jours + multiplier
+//     (séparés du reste par un séparateur vertical fin)
+//
+// Cas vides gérés silencieusement (streak = 0 → flamme grise muette,
+// pas de bloc multiplier).
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'CARNET NATURALISTE',
-                  style: GoogleFonts.karla(
-                    fontSize: 11,
-                    letterSpacing: 2.5,
-                    fontWeight: FontWeight.bold,
-                    color: terracotta,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Spotted',
-                  style: GoogleFonts.cormorantGaramond(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w500,
-                    color: forestGreen,
-                    height: 1.05,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Material(
-            color: forestGreen,
-            shape: const CircleBorder(),
-            elevation: 2,
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: () => _showAddMenu(context),
-              child: const SizedBox(
-                width: 36,
-                height: 36,
-                child: Icon(Icons.add, color: surfaceBase, size: 18),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LevelCard extends StatelessWidget {
-  const _LevelCard({required this.levelAsync});
+class _ProgressHeader extends StatelessWidget {
+  const _ProgressHeader({required this.levelAsync, required this.streak});
 
   final AsyncValue<LevelInfo> levelAsync;
+  final Streak streak;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
@@ -239,32 +249,44 @@ class _LevelCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: forestGreen.withValues(alpha: 0.4),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
+              color: forestGreen.withValues(alpha: 0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
         child: levelAsync.when(
           loading: () => const SizedBox(
-            height: 80,
+            height: 76,
             child: Center(
               child: CircularProgressIndicator(strokeWidth: 2, color: gold),
             ),
           ),
           error: (e, _) => Text(
-            'Niveau indisponible',
+            'Progression indisponible',
             style: GoogleFonts.karla(color: surfaceBase, fontSize: 13),
           ),
-          data: (level) => _LevelContent(level: level),
+          data: (level) => Row(
+            children: [
+              Expanded(child: _LevelBlock(level: level)),
+              const SizedBox(width: 10),
+              Container(
+                width: 1,
+                height: 56,
+                color: surfaceBase.withValues(alpha: 0.15),
+              ),
+              const SizedBox(width: 10),
+              _StreakBlock(streak: streak),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _LevelContent extends StatelessWidget {
-  const _LevelContent({required this.level});
+class _LevelBlock extends StatelessWidget {
+  const _LevelBlock({required this.level});
 
   final LevelInfo level;
 
@@ -274,11 +296,10 @@ class _LevelContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 32,
+              height: 32,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: const LinearGradient(
@@ -289,7 +310,7 @@ class _LevelContent extends StatelessWidget {
                 boxShadow: [
                   BoxShadow(
                     color: goldLight.withValues(alpha: 0.4),
-                    blurRadius: 12,
+                    blurRadius: 10,
                   ),
                 ],
               ),
@@ -297,7 +318,7 @@ class _LevelContent extends StatelessWidget {
                 child: Text(
                   '${level.value}',
                   style: GoogleFonts.cormorantGaramond(
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                     color: forestGreen,
                   ),
@@ -305,37 +326,31 @@ class _LevelContent extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            Text(
-              'NIVEAU',
-              style: GoogleFonts.karla(
-                fontSize: 9,
-                letterSpacing: 2,
-                color: const Color(0xFFC4A572),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Text(
-              _formatPoints(level.currentPoints),
-              style: GoogleFonts.cormorantGaramond(
-                fontSize: 32,
-                fontWeight: FontWeight.w300,
-                color: surfaceBase,
-                height: 1.1,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '/ ${_formatPoints(level.nextThreshold)} PTS',
-              style: GoogleFonts.karla(
-                fontSize: 10,
-                letterSpacing: 1.5,
-                color: const Color(0xFFC4A572),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'NIVEAU ${level.value}',
+                    style: GoogleFonts.karla(
+                      fontSize: 9,
+                      letterSpacing: 2,
+                      color: const Color(0xFFC4A572),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_formatPoints(level.currentPoints)} / ${_formatPoints(level.nextThreshold)} pts',
+                    style: GoogleFonts.karla(
+                      fontSize: 12,
+                      color: surfaceBase,
+                      fontWeight: FontWeight.w600,
+                      height: 1.0,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -345,7 +360,7 @@ class _LevelContent extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
             value: level.progressFraction,
-            minHeight: 6,
+            minHeight: 5,
             backgroundColor: forestGreen.withValues(alpha: 0.5),
             valueColor: const AlwaysStoppedAnimation<Color>(goldLight),
           ),
@@ -358,12 +373,134 @@ class _LevelContent extends StatelessWidget {
     final s = n.toString();
     final buffer = StringBuffer();
     for (var i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buffer.write(' ');
+      if (i > 0 && (s.length - i) % 3 == 0) buffer.write(' ');
       buffer.write(s[i]);
     }
     return buffer.toString();
   }
 }
+
+class _StreakBlock extends StatelessWidget {
+  const _StreakBlock({required this.streak});
+
+  final Streak streak;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = streak.isActiveToday;
+    final isGrace = streak.isInGrace;
+    final flameColor = streak.current == 0
+        ? textMuted
+        : isGrace
+            ? const Color(0xFFE08E2C)
+            : terracotta;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _Flame(color: flameColor, animated: isActive),
+        const SizedBox(height: 2),
+        Text(
+          streak.current == 0 ? '0j' : '${streak.current}j',
+          style: GoogleFonts.karla(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: surfaceBase,
+            height: 1.0,
+          ),
+        ),
+        if (streak.xpMultiplier > 1.0) ...[
+          const SizedBox(height: 3),
+          Text(
+            '×${streak.xpMultiplier.toStringAsFixed(2)}',
+            style: GoogleFonts.karla(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: goldLight,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Flamme avec petit pulse + glow quand active. Adapté de l'ancien
+/// streak_card._FlameIcon mais plus compact (28 px au lieu de 50).
+class _Flame extends StatefulWidget {
+  const _Flame({required this.color, required this.animated});
+
+  final Color color;
+  final bool animated;
+
+  @override
+  State<_Flame> createState() => _FlameState();
+}
+
+class _FlameState extends State<_Flame> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    if (widget.animated) _ctrl.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _Flame old) {
+    super.didUpdateWidget(old);
+    if (widget.animated && !_ctrl.isAnimating) {
+      _ctrl.repeat(reverse: true);
+    } else if (!widget.animated && _ctrl.isAnimating) {
+      _ctrl.stop();
+      _ctrl.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) {
+        final scale = 1.0 + (_ctrl.value * 0.08);
+        return Transform.scale(
+          scale: scale,
+          child: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: surfaceBase.withValues(alpha: 0.15),
+              boxShadow: widget.animated
+                  ? [
+                      BoxShadow(
+                        color: widget.color.withValues(alpha: 0.6),
+                        blurRadius: 10 + _ctrl.value * 6,
+                      ),
+                    ]
+                  : null,
+            ),
+            alignment: Alignment.center,
+            child: const Text('🔥', style: TextStyle(fontSize: 16)),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// =============================================================
+// _SectionLabel — label uppercase tracking
+// =============================================================
 
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.text});
@@ -387,29 +524,63 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-class _TerritoryCard extends StatelessWidget {
-  const _TerritoryCard({
-    required this.shortCode,
-    required this.displayName,
-    required this.badge,
-    required this.badgeColor,
-    required this.centerLat,
-    required this.centerLng,
-    required this.progressAsync,
-    required this.zoneAsync,
-  });
+// =============================================================
+// _TerritoriesList — itère depuis allZonesProvider (vs hard-codé)
+// =============================================================
 
-  final String shortCode;
-  final String displayName;
-  final String badge;
-  final Color badgeColor;
-  final double centerLat;
-  final double centerLng;
+class _TerritoriesList extends ConsumerWidget {
+  const _TerritoriesList({required this.zonesAsync});
+
+  final AsyncValue<List<Zone>> zonesAsync;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return zonesAsync.when(
+      loading: () => const SizedBox(
+        height: 80,
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2, color: forestGreen),
+          ),
+        ),
+      ),
+      error: (e, _) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Text(
+          'Terrains indisponibles',
+          style: GoogleFonts.karla(color: textMuted),
+        ),
+      ),
+      data: (zones) => Column(
+        children: [
+          for (var i = 0; i < zones.length; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
+            _TerritoryCard(
+              zone: zones[i],
+              progressAsync: ref.watch(zoneProgressProvider(zones[i].shortCode ?? '')),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TerritoryCard extends StatelessWidget {
+  const _TerritoryCard({required this.zone, required this.progressAsync});
+
+  final Zone zone;
   final AsyncValue<TerritoryProgress> progressAsync;
-  final AsyncValue<Zone> zoneAsync;
 
   @override
   Widget build(BuildContext context) {
+    // Récupère la config d'affichage (centre + tag). Fallback si zone inconnue
+    // (ex: nouvelle zone ajoutée en BDD avant qu'on définisse sa config) :
+    // centre arbitraire France + tag "AUTRE".
+    final display = _zoneDisplay[zone.shortCode] ??
+        (lat: 46.5, lng: 2.5, tag: 'AUTRE', tagColor: textSecondary);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: DecoratedBox(
@@ -430,23 +601,20 @@ class _TerritoryCard extends StatelessWidget {
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: () {
-                final zone = zoneAsync.asData?.value;
-                if (zone != null) context.go('/territory/${zone.id}');
-              },
+              onTap: () => context.go('/territory/${zone.id}'),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _TerritoryMap(
-                    centerLat: centerLat,
-                    centerLng: centerLng,
-                    badge: badge,
-                    badgeColor: badgeColor,
+                    centerLat: display.lat,
+                    centerLng: display.lng,
+                    badge: display.tag,
+                    badgeColor: display.tagColor,
                   ),
                   Container(height: 2, color: const Color(0xFFE8E0CE)),
                   _TerritoryInfo(
-                    displayName: displayName,
-                    shortCode: shortCode,
+                    displayName: zone.name,
+                    shortCode: zone.shortCode ?? '',
                     progressAsync: progressAsync,
                   ),
                 ],
@@ -489,12 +657,10 @@ class _TerritoryMap extends StatelessWidget {
           Image.network(
             _staticUrl,
             fit: BoxFit.cover,
-            // Pendant le chargement : gradient + skeleton.
             loadingBuilder: (_, child, progress) {
               if (progress == null) return child;
               return const _MapFallback();
             },
-            // En cas d'erreur réseau / quota Mapbox : même gradient en fallback.
             errorBuilder: (_, _, _) => const _MapFallback(),
           ),
           Positioned(

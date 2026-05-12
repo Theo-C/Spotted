@@ -7,6 +7,20 @@ import '../../auth/data/auth_providers.dart';
 import 'category_repository.dart';
 import 'zone_repository.dart';
 
+/// Toutes les zones du pays courant (MVP : 60 Oise + 02 Aisne).
+/// Source de vérité pour itérer les territoires sur la Home (vs hard-codé
+/// avant). Quand on ajoutera la Somme, il suffira de l'insérer en BDD.
+final allZonesProvider = FutureProvider<List<Zone>>((ref) async {
+  final zones = await ref.watch(zoneRepositoryProvider).getAll();
+  // Oise d'abord (DOMICILE), puis les autres. Tri stable sur shortCode.
+  zones.sort((a, b) {
+    if (a.shortCode == '60') return -1;
+    if (b.shortCode == '60') return 1;
+    return (a.shortCode ?? '').compareTo(b.shortCode ?? '');
+  });
+  return zones;
+});
+
 /// Zone par short_code (ex: '60' pour Oise, '02' pour Aisne).
 /// FutureProvider.family plutôt qu'une constante car les UUIDs sont
 /// générés par Supabase (pas connus à la compilation).
