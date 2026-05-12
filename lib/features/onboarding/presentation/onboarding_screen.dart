@@ -217,12 +217,14 @@ class _StepDots extends StatelessWidget {
 
 class _StepLayout extends StatelessWidget {
   const _StepLayout({
-    required this.emoji,
+    required this.visual,
     required this.title,
     required this.body,
   });
 
-  final String emoji;
+  /// Visuel d'entête : Image.asset pour le welcome (logo Spotted), emoji
+  /// pour les autres étapes.
+  final Widget visual;
   final String title;
   final Widget body;
 
@@ -233,7 +235,7 @@ class _StepLayout extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 84)),
+          visual,
           const SizedBox(height: 24),
           Text(
             title,
@@ -266,10 +268,15 @@ class _WelcomeStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _StepLayout(
-      emoji: '🌿',
+    return _StepLayout(
+      visual: Image.asset(
+        'assets/icon/icon.png',
+        width: 120,
+        height: 120,
+        fit: BoxFit.contain,
+      ),
       title: 'Bienvenue dans Spotted',
-      body: Text(
+      body: const Text(
         "Ton carnet naturaliste perso. Pour chaque territoire, "
         "tu consultes les espèces remarquables, tu les observes sur "
         "le terrain, et tu valides tes découvertes avec une photo.",
@@ -284,7 +291,7 @@ class _CameraGpsStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _StepLayout(
-      emoji: '📷',
+      visual: const Text('📷', style: TextStyle(fontSize: 84)),
       title: 'Configure ton app caméra',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -338,7 +345,7 @@ class _NotifStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const _StepLayout(
-      emoji: '🔔',
+      visual: Text('🔔', style: TextStyle(fontSize: 84)),
       title: 'Rappel quotidien',
       body: Text(
         "Un petit rappel à 13:00 chaque jour pour ne pas casser ta série "
