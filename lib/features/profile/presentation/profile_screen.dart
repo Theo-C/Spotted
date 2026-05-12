@@ -9,8 +9,10 @@ import '../../../shared/models/app_user.dart';
 import '../../../shared/models/rarity.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../../core/services/notifications_service.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/level.dart';
+import '../../gamification/presentation/badges_section.dart';
 import '../../observations/data/observations_for_map_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -59,19 +61,12 @@ class ProfileScreen extends ConsumerWidget {
             const _SectionLabel('Statistiques'),
             const SizedBox(height: 8),
             _StatsGrid(allObsAsync: myObsAsync),
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
+            const BadgesSection(),
+            const SizedBox(height: 24),
             const Divider(color: Color(0xFFE8E0CE)),
             const SizedBox(height: 8),
-            _SettingsTile(
-              icon: Icons.tune,
-              label: 'Réglages',
-              onTap: () {
-                // Placeholder — Phase 9 ou post-MVP
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Bientôt')),
-                );
-              },
-            ),
+            const _StreakNotifsTile(),
             _SettingsTile(
               icon: Icons.logout,
               label: 'Se déconnecter',
@@ -477,6 +472,83 @@ class _AuthEmailLine extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Switch "Rappel quotidien série" : enable/disable la notif locale à 20:00.
+class _StreakNotifsTile extends ConsumerWidget {
+  const _StreakNotifsTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabledAsync = ref.watch(notificationsEnabledProvider);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Row(
+        children: [
+          const Icon(Icons.notifications_active_outlined,
+              size: 20, color: forestGreen),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Rappel quotidien',
+                  style: GoogleFonts.karla(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: forestGreen,
+                  ),
+                ),
+                Text(
+                  'Notification à 20:00 pour entretenir ta série',
+                  style: GoogleFonts.karla(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          enabledAsync.when(
+            loading: () => const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2, color: forestGreen),
+            ),
+            error: (e, _) => const Icon(Icons.error, color: terracotta),
+            data: (enabled) => Switch.adaptive(
+              value: enabled,
+              activeThumbColor: surfaceBase,
+              activeTrackColor: forestGreen,
+              onChanged: (v) async {
+                final service = ref.read(notificationsServiceProvider);
+                if (v) {
+                  final ok = await service.enable();
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: terracotta,
+                        content: Text(
+                          "Permission refusée — autorise les notifs dans les réglages système.",
+                          style: GoogleFonts.karla(color: surfaceBase),
+                        ),
+                      ),
+                    );
+                  }
+                } else {
+                  await service.disable();
+                }
+                ref.invalidate(notificationsEnabledProvider);
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
