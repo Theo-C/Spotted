@@ -46,34 +46,47 @@ class ProfileScreen extends ConsumerWidget {
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _LevelHeader(
-              user: currentAppUser,
-              levelAsync: levelAsync,
+      // LayoutBuilder + ConstrainedBox(minHeight viewport) permet de pousser
+      // les Réglages en bas de l'écran via Spacer tout en gardant le scroll
+      // quand le contenu dépasse (petit écran ou texte zoomé).
+      body: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _LevelHeader(
+                    user: currentAppUser,
+                    levelAsync: levelAsync,
+                  ),
+                  if (currentAuthUser?.email != null) ...[
+                    const SizedBox(height: 8),
+                    _AuthEmailLine(email: currentAuthUser!.email!),
+                  ],
+                  const SizedBox(height: 16),
+                  _StatsRow(allObsAsync: myObsAsync),
+                  const SizedBox(height: 14),
+                  const _BadgesTeaser(),
+                  // Spacer pousse les Réglages en bas de l'écran.
+                  const Spacer(),
+                  const Divider(color: Color(0xFFE8E0CE)),
+                  const SizedBox(height: 6),
+                  const _SectionLabel('Réglages'),
+                  const SizedBox(height: 4),
+                  const _StreakNotifsTile(),
+                  _SettingsTile(
+                    icon: Icons.logout,
+                    label: 'Se déconnecter',
+                    color: const Color(0xFFB8624A),
+                    onTap: () => _confirmLogout(context, ref),
+                  ),
+                ],
+              ),
             ),
-            if (currentAuthUser?.email != null) ...[
-              const SizedBox(height: 8),
-              _AuthEmailLine(email: currentAuthUser!.email!),
-            ],
-            const SizedBox(height: 16),
-            _StatsRow(allObsAsync: myObsAsync),
-            const SizedBox(height: 14),
-            const _BadgesTeaser(),
-            const SizedBox(height: 18),
-            const _SectionLabel('Réglages'),
-            const SizedBox(height: 4),
-            const _StreakNotifsTile(),
-            _SettingsTile(
-              icon: Icons.logout,
-              label: 'Se déconnecter',
-              color: const Color(0xFFB8624A),
-              onTap: () => _confirmLogout(context, ref),
-            ),
-          ],
+          ),
         ),
       ),
     );
