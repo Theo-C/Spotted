@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+// Mapbox SDK exporte un type `Size` qui shadow celui de Flutter — on l'écarte
+// pour pouvoir continuer à utiliser le Size de Flutter (Size.zero, etc.).
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 
 import '../../../app/theme.dart';
 import '../../../core/services/location_service.dart';
@@ -13,6 +17,14 @@ import '../../territories/data/category_repository.dart';
 import '../data/observations_for_map_provider.dart';
 import 'observation_detail_sheet.dart';
 
+/// Carnet géo : carte Mapbox avec les obs sous forme de points clustérisés.
+///
+/// Architecture du rendu (vs ancien CircleAnnotationManager) :
+/// - Une source GeoJSON `obs` avec `cluster: true` (clusterMaxZoom: 14)
+/// - 3 layers : obs-clusters (cercles), obs-cluster-count (texte du nombre),
+///   obs-point (cercles individuels colorés selon la rareté)
+/// - Tap : on query les features rendues à l'écran ; si cluster → zoom vers
+///   l'expansion zoom natif, si point → bottom sheet de détail.
 class JournalScreen extends ConsumerStatefulWidget {
   const JournalScreen({super.key});
 
@@ -22,21 +34,34 @@ class JournalScreen extends ConsumerStatefulWidget {
 
 class _JournalScreenState extends ConsumerState<JournalScreen> {
   MapboxMap? _map;
-  CircleAnnotationManager? _circleManager;
 
-  /// Mapping annotation ID → observation, pour résoudre le tap.
-  final Map<String, ObservationOnMap> _byAnnotationId = {};
+  /// Index obs_id → ObservationOnMap, pour résoudre le tap sur un point
+  /// individuel sans devoir refaire un round-trip BDD.
+  final Map<String, ObservationOnMap> _byObsId = {};
 
-  // Filtres actifs (null = pas de filtre).
-  String? _categoryFilter; // category.id
+  // Filtres (null = pas de filtre).
+  String? _categoryFilter;
   Rarity? _rarityFilter;
-  String? _observerFilter; // user.id
+  String? _observerFilter;
 
-  // Viewport mémoïsé : à chaque setState (changement de filtre), une nouvelle
-  // instance CameraViewportState() ferait que Mapbox ré-applique le viewport
-  // (par identité d'instance), et reset la caméra sur Compiègne. Memoize pour
-  // que Mapbox ignore les rebuilds. Cf. même bug fix dans new_observation_screen.
+  /// État de la barre de filtres (collapsed par défaut pour ne pas bouffer
+  /// 110 px de carte comme avant).
+  bool _filtersOpen = false;
+
+  /// Style courant (cycle outdoors → satellite-streets → standard via le
+  /// bouton "Layers"). Re-attache la source + les layers à chaque switch
+  /// dans _onStyleLoaded (le style wipe les layers custom).
+  String _styleUri = MapboxStyles.OUTDOORS;
+
+  /// Viewport mémoïsé : à chaque setState (changement de filtre), une nouvelle
+  /// instance ferait que Mapbox ré-applique le viewport (par identité) et
+  /// reset la caméra. On le construit une fois.
   late final CameraViewportState _initialViewport;
+
+  static const _sourceId = 'obs';
+  static const _layerClusters = 'obs-clusters';
+  static const _layerClusterCount = 'obs-cluster-count';
+  static const _layerPoint = 'obs-point';
 
   @override
   void initState() {
@@ -47,16 +72,219 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     );
   }
 
+  // -------------------------------------------------------------
+  // Setup Mapbox
+  // -------------------------------------------------------------
+
   Future<void> _onMapCreated(MapboxMap map) async {
     _map = map;
-    _circleManager = await map.annotations.createCircleAnnotationManager();
-    _circleManager!.tapEvents(onTap: _handleAnnotationTap);
-    // Scale bar masquée — peu utile au quotidien, encombre l'UI.
-    await map.scaleBar.updateSettings(
-      ScaleBarSettings(enabled: false),
-    );
-    await _renderAnnotations();
+    await map.scaleBar.updateSettings(ScaleBarSettings(enabled: false));
+    // Tap → on query les features sous le doigt et on route vers cluster
+    // (zoom-in) ou point individuel (bottom sheet). Pattern non-deprecated
+    // de Mapbox 2.x.
+    map.addInteraction(TapInteraction.onMap(_onMapTap));
   }
+
+  /// Appelé à chaque style load (initial + après loadStyleURI). On (ré)ajoute
+  /// la source clustérisée et les 3 layers. Idempotent : on vérifie l'existence
+  /// avant d'ajouter (le 1er style load arrive parfois 2× sur Android).
+  Future<void> _onStyleLoaded(StyleLoadedEventData _) async {
+    final map = _map;
+    if (map == null) return;
+
+    final sourceExists = await map.style.styleSourceExists(_sourceId);
+    if (!sourceExists) {
+      await map.style.addSource(GeoJsonSource(
+        id: _sourceId,
+        data: _emptyGeoJson(),
+        cluster: true,
+        clusterRadius: 50,
+        clusterMaxZoom: 14,
+      ));
+    }
+
+    final clustersExists = await map.style.styleLayerExists(_layerClusters);
+    if (!clustersExists) {
+      // Cercle des clusters : couleur + taille augmentent par paliers.
+      await map.style.addLayer(CircleLayer(
+        id: _layerClusters,
+        sourceId: _sourceId,
+        filter: ['has', 'point_count'],
+        circleColorExpression: [
+          'step',
+          ['get', 'point_count'],
+          '#B8624A', // 1..4 → terracotta
+          5,
+          '#A04A30', // 5..19 → terracotta foncé
+          20,
+          '#1F3D2E', // 20+ → forest green
+        ],
+        circleRadiusExpression: [
+          'step',
+          ['get', 'point_count'],
+          16.0,
+          5,
+          22.0,
+          20,
+          28.0,
+        ],
+        circleStrokeColor: 0xFFFAF6EC,
+        circleStrokeWidth: 3,
+      ));
+    }
+
+    final countExists = await map.style.styleLayerExists(_layerClusterCount);
+    if (!countExists) {
+      await map.style.addLayer(SymbolLayer(
+        id: _layerClusterCount,
+        sourceId: _sourceId,
+        filter: ['has', 'point_count'],
+        textField: '{point_count_abbreviated}',
+        textSize: 13,
+        textColor: 0xFFFAF6EC,
+      ));
+    }
+
+    final pointExists = await map.style.styleLayerExists(_layerPoint);
+    if (!pointExists) {
+      await map.style.addLayer(CircleLayer(
+        id: _layerPoint,
+        sourceId: _sourceId,
+        filter: ['!', ['has', 'point_count']],
+        circleColorExpression: [
+          'match',
+          ['get', 'rarity'],
+          'common', '#7A7569',
+          'rare', '#2D6E8C',
+          'epic', '#7A3D9A',
+          'legendary', '#C49120',
+          '#7A7569',
+        ],
+        circleRadius: 8,
+        circleStrokeColor: 0xFFFAF6EC,
+        circleStrokeWidth: 2,
+      ));
+    }
+
+    // Pousse les données courantes (filtre appliqué).
+    await _refreshSource();
+  }
+
+  /// Recalcule la GeoJSON FeatureCollection à partir du provider et la pousse
+  /// dans la source. Met aussi à jour l'index _byObsId.
+  Future<void> _refreshSource() async {
+    final map = _map;
+    if (map == null) return;
+    final exists = await map.style.styleSourceExists(_sourceId);
+    if (!exists) return;
+
+    final allItems =
+        ref.read(allObservationsForMapProvider).asData?.value ?? const [];
+    final filtered = allItems.where(_matchesFilters).toList();
+
+    _byObsId
+      ..clear()
+      ..addEntries(filtered.map((i) => MapEntry(i.obs.id, i)));
+
+    final features = filtered.map((i) => {
+          'type': 'Feature',
+          'properties': {
+            'obs_id': i.obs.id,
+            'rarity': i.rarity?.name ?? 'common',
+          },
+          'geometry': {
+            'type': 'Point',
+            'coordinates': [i.obs.longitude, i.obs.latitude],
+          },
+        }).toList();
+
+    final geoJson = jsonEncode({
+      'type': 'FeatureCollection',
+      'features': features,
+    });
+
+    await map.style.setStyleSourceProperty(_sourceId, 'data', geoJson);
+  }
+
+  String _emptyGeoJson() => jsonEncode({
+        'type': 'FeatureCollection',
+        'features': <Map<String, dynamic>>[],
+      });
+
+  // -------------------------------------------------------------
+  // Tap handler — cluster ou point individuel
+  // -------------------------------------------------------------
+
+  Future<void> _onMapTap(MapContentGestureContext ctx) async {
+    final map = _map;
+    if (map == null) return;
+
+    final results = await map.queryRenderedFeatures(
+      RenderedQueryGeometry.fromScreenCoordinate(ctx.touchPosition),
+      RenderedQueryOptions(
+        layerIds: [_layerClusters, _layerPoint],
+        filter: null,
+      ),
+    );
+
+    for (final result in results) {
+      if (result == null) continue;
+      final layers = result.layers;
+      final feature = result.queriedFeature.feature;
+
+      if (layers.contains(_layerClusters)) {
+        await _zoomToCluster(feature);
+        return;
+      }
+      if (layers.contains(_layerPoint)) {
+        await _openPointDetail(feature);
+        return;
+      }
+    }
+  }
+
+  Future<void> _zoomToCluster(Map<Object?, Object?> feature) async {
+    final map = _map;
+    if (map == null) return;
+    final ext = await map.getGeoJsonClusterExpansionZoom(
+      _sourceId,
+      // L'API attend Map<String?, Object?> — feature est Map<Object?, Object?>
+      // côté pigeon, cast direct OK car les clés sont des Strings.
+      feature.cast<String?, Object?>(),
+    );
+    final zoom = (ext.value as num?)?.toDouble();
+    final coords = ((feature['geometry'] as Map?)?['coordinates'] as List?)
+        ?.cast<num>();
+    if (zoom == null || coords == null || coords.length < 2) return;
+
+    await map.flyTo(
+      CameraOptions(
+        center: Point(coordinates: Position(coords[0], coords[1])),
+        zoom: zoom + 0.3, // +0.3 pour bien éclater le cluster
+      ),
+      MapAnimationOptions(duration: 400),
+    );
+  }
+
+  Future<void> _openPointDetail(Map<Object?, Object?> feature) async {
+    final props = (feature['properties'] as Map?)?.cast<String, Object?>();
+    final obsId = props?['obs_id'] as String?;
+    if (obsId == null) return;
+    final item = _byObsId[obsId];
+    if (item == null || !mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: surfaceBase,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => ObservationDetailSheet(item: item),
+    );
+  }
+
+  // -------------------------------------------------------------
+  // Boutons flottants
+  // -------------------------------------------------------------
 
   Future<void> _centerOnUser() async {
     final result =
@@ -69,7 +297,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
             center: Point(coordinates: Position(lng, lat)),
             zoom: 13,
           ),
-          MapAnimationOptions(duration: 800),
+          MapAnimationOptions(duration: 600),
         );
       case LocationServiceDisabled():
         _snackbar('Active la localisation dans tes réglages système.');
@@ -84,39 +312,72 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     }
   }
 
+  /// Centre la caméra sur l'enveloppe des obs visibles (filtres appliqués).
+  /// Utile pour "Voir toutes mes obs" en un tap.
+  Future<void> _fitVisibleBounds() async {
+    final map = _map;
+    if (map == null) return;
+    final items =
+        ref.read(allObservationsForMapProvider).asData?.value ?? const [];
+    final filtered = items.where(_matchesFilters).toList();
+    if (filtered.isEmpty) {
+      _snackbar('Aucune observation à recadrer.');
+      return;
+    }
+    if (filtered.length == 1) {
+      final i = filtered.first;
+      await map.flyTo(
+        CameraOptions(
+          center: Point(coordinates: Position(i.obs.longitude, i.obs.latitude)),
+          zoom: 13,
+        ),
+        MapAnimationOptions(duration: 600),
+      );
+      return;
+    }
+    var minLat = double.infinity, maxLat = -double.infinity;
+    var minLng = double.infinity, maxLng = -double.infinity;
+    for (final i in filtered) {
+      if (i.obs.latitude < minLat) minLat = i.obs.latitude;
+      if (i.obs.latitude > maxLat) maxLat = i.obs.latitude;
+      if (i.obs.longitude < minLng) minLng = i.obs.longitude;
+      if (i.obs.longitude > maxLng) maxLng = i.obs.longitude;
+    }
+    final camera = await map.cameraForCoordinateBounds(
+      CoordinateBounds(
+        southwest: Point(coordinates: Position(minLng, minLat)),
+        northeast: Point(coordinates: Position(maxLng, maxLat)),
+        infiniteBounds: false,
+      ),
+      MbxEdgeInsets(top: 90, left: 40, bottom: 110, right: 40),
+      null,
+      null,
+      null,
+      null,
+    );
+    await map.flyTo(camera, MapAnimationOptions(duration: 600));
+  }
+
+  Future<void> _cycleStyle() async {
+    const cycle = [
+      MapboxStyles.OUTDOORS,
+      MapboxStyles.SATELLITE_STREETS,
+      MapboxStyles.STANDARD,
+    ];
+    final idx = cycle.indexOf(_styleUri);
+    final next = cycle[(idx + 1) % cycle.length];
+    setState(() => _styleUri = next);
+    await _map?.loadStyleURI(next);
+    // _onStyleLoaded sera rappelé automatiquement → re-attache source + layers.
+  }
+
   void _snackbar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Recharge tous les markers depuis le provider, en appliquant les filtres.
-  /// Idempotent — supprime d'abord les annotations existantes.
-  Future<void> _renderAnnotations() async {
-    final manager = _circleManager;
-    if (manager == null) return;
-    final asyncItems = ref.read(allObservationsForMapProvider);
-    final allItems = asyncItems.asData?.value;
-    if (allItems == null) return;
-
-    final filtered = allItems.where(_matchesFilters).toList();
-
-    await manager.deleteAll();
-    _byAnnotationId.clear();
-    for (final item in filtered) {
-      final colorInt = _rarityColorInt(item.rarity);
-      final annotation = await manager.create(
-        CircleAnnotationOptions(
-          geometry: Point(
-            coordinates: Position(item.obs.longitude, item.obs.latitude),
-          ),
-          circleRadius: 8,
-          circleColor: colorInt,
-          circleStrokeWidth: 2,
-          circleStrokeColor: 0xFFFAF6EC,
-        ),
-      );
-      _byAnnotationId[annotation.id] = item;
-    }
-  }
+  // -------------------------------------------------------------
+  // Filtres
+  // -------------------------------------------------------------
 
   bool _matchesFilters(ObservationOnMap item) {
     if (_categoryFilter != null &&
@@ -130,49 +391,44 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     return true;
   }
 
-  bool _handleAnnotationTap(CircleAnnotation annotation) {
-    final item = _byAnnotationId[annotation.id];
-    if (item == null) return false;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: surfaceBase,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) => ObservationDetailSheet(item: item),
-    );
-    return true;
-  }
+  bool get _hasActiveFilter =>
+      _categoryFilter != null ||
+      _rarityFilter != null ||
+      _observerFilter != null;
 
-  static int _rarityColorInt(Rarity? r) {
-    return switch (r) {
-      Rarity.common => 0xFF7A7569,
-      Rarity.rare => 0xFF2D6E8C,
-      Rarity.epic => 0xFF7A3D9A,
-      Rarity.legendary => 0xFFC49120,
-      null => 0xFF7A7569,
-    };
+  void _clearFilters() {
+    setState(() {
+      _categoryFilter = null;
+      _rarityFilter = null;
+      _observerFilter = null;
+    });
+    _refreshSource();
   }
 
   void _setCategoryFilter(String? id) {
     setState(() => _categoryFilter = id);
-    _renderAnnotations();
+    _refreshSource();
   }
 
   void _setRarityFilter(Rarity? r) {
     setState(() => _rarityFilter = r);
-    _renderAnnotations();
+    _refreshSource();
   }
 
   void _setObserverFilter(String? id) {
     setState(() => _observerFilter = id);
-    _renderAnnotations();
+    _refreshSource();
   }
+
+  // -------------------------------------------------------------
+  // build
+  // -------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
+    // Re-render à chaque changement du provider d'obs.
     ref.listen(allObservationsForMapProvider, (_, _) {
-      _renderAnnotations();
+      _refreshSource();
     });
 
     final allItems =
@@ -194,28 +450,54 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
         children: [
           MapWidget(
             viewport: _initialViewport,
-            styleUri: MapboxStyles.OUTDOORS,
+            styleUri: _styleUri,
             onMapCreated: _onMapCreated,
+            onStyleLoadedListener: _onStyleLoaded,
           ),
           Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
+            top: 8,
+            left: 12,
+            right: 12,
             child: _FiltersBar(
+              open: _filtersOpen,
+              onToggle: () => setState(() => _filtersOpen = !_filtersOpen),
               categoryFilter: _categoryFilter,
               rarityFilter: _rarityFilter,
               observerFilter: _observerFilter,
               visibleCount: visibleCount,
               totalCount: allItems.length,
+              hasActiveFilter: _hasActiveFilter,
               onCategoryChanged: _setCategoryFilter,
               onRarityChanged: _setRarityFilter,
               onObserverChanged: _setObserverFilter,
+              onClearAll: _clearFilters,
             ),
           ),
           Positioned(
-            right: 16,
-            bottom: 24,
-            child: _MyLocationButton(onTap: _centerOnUser),
+            right: 12,
+            bottom: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _FloatBtn(
+                  icon: Icons.zoom_out_map,
+                  tooltip: 'Voir toutes mes obs',
+                  onTap: _fitVisibleBounds,
+                ),
+                const SizedBox(height: 8),
+                _FloatBtn(
+                  icon: Icons.layers_outlined,
+                  tooltip: 'Style de carte',
+                  onTap: _cycleStyle,
+                ),
+                const SizedBox(height: 8),
+                _FloatBtn(
+                  icon: Icons.my_location,
+                  tooltip: 'Ma position',
+                  onTap: _centerOnUser,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -223,37 +505,192 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   }
 }
 
-class _MyLocationButton extends StatelessWidget {
-  const _MyLocationButton({required this.onTap});
+// =============================================================
+// Boutons flottants (carte)
+// =============================================================
 
+class _FloatBtn extends StatelessWidget {
+  const _FloatBtn({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+  });
+
+  final IconData icon;
   final VoidCallback onTap;
+  final String tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: surfaceBase,
-      shape: const CircleBorder(),
-      elevation: 4,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: const SizedBox(
-          width: 48,
-          height: 48,
-          child: Icon(Icons.my_location, color: forestGreen, size: 22),
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: surfaceBase,
+        shape: const CircleBorder(),
+        elevation: 4,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Icon(icon, color: forestGreen, size: 22),
+          ),
         ),
       ),
     );
   }
 }
 
+// =============================================================
+// FiltersBar — collapsible
+// =============================================================
+
 class _FiltersBar extends ConsumerWidget {
   const _FiltersBar({
+    required this.open,
+    required this.onToggle,
     required this.categoryFilter,
     required this.rarityFilter,
     required this.observerFilter,
     required this.visibleCount,
     required this.totalCount,
+    required this.hasActiveFilter,
+    required this.onCategoryChanged,
+    required this.onRarityChanged,
+    required this.onObserverChanged,
+    required this.onClearAll,
+  });
+
+  final bool open;
+  final VoidCallback onToggle;
+  final String? categoryFilter;
+  final Rarity? rarityFilter;
+  final String? observerFilter;
+  final int visibleCount;
+  final int totalCount;
+  final bool hasActiveFilter;
+  final ValueChanged<String?> onCategoryChanged;
+  final ValueChanged<Rarity?> onRarityChanged;
+  final ValueChanged<String?> onObserverChanged;
+  final VoidCallback onClearAll;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          color: surfaceBase.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF000000).withValues(alpha: 0.10),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header — toujours visible. Tap pour expand/collapse.
+            InkWell(
+              onTap: onToggle,
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  children: [
+                    Icon(
+                      hasActiveFilter ? Icons.filter_alt : Icons.filter_alt_outlined,
+                      size: 16,
+                      color: hasActiveFilter ? terracotta : forestGreen,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Filtres',
+                      style: GoogleFonts.karla(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: forestGreen,
+                      ),
+                    ),
+                    if (hasActiveFilter) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: terracotta,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 10),
+                    Text(
+                      '$visibleCount / $totalCount obs.',
+                      style: GoogleFonts.karla(
+                        fontSize: 11,
+                        color: textSecondary,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (hasActiveFilter && !open)
+                      TextButton(
+                        onPressed: onClearAll,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          'Tout effacer',
+                          style: GoogleFonts.karla(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                            color: terracotta,
+                          ),
+                        ),
+                      ),
+                    Icon(
+                      open ? Icons.expand_less : Icons.expand_more,
+                      size: 18,
+                      color: forestGreen,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Corps collapsible
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: open
+                  ? _FiltersBody(
+                      categoryFilter: categoryFilter,
+                      rarityFilter: rarityFilter,
+                      observerFilter: observerFilter,
+                      onCategoryChanged: onCategoryChanged,
+                      onRarityChanged: onRarityChanged,
+                      onObserverChanged: onObserverChanged,
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FiltersBody extends ConsumerWidget {
+  const _FiltersBody({
+    required this.categoryFilter,
+    required this.rarityFilter,
+    required this.observerFilter,
     required this.onCategoryChanged,
     required this.onRarityChanged,
     required this.onObserverChanged,
@@ -262,8 +699,6 @@ class _FiltersBar extends ConsumerWidget {
   final String? categoryFilter;
   final Rarity? rarityFilter;
   final String? observerFilter;
-  final int visibleCount;
-  final int totalCount;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Rarity?> onRarityChanged;
   final ValueChanged<String?> onObserverChanged;
@@ -272,39 +707,11 @@ class _FiltersBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final categoriesAsync = ref.watch(_categoriesProvider);
     final observersAsync = ref.watch(observersProvider);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: surfaceBase.withValues(alpha: 0.94),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF000000).withValues(alpha: 0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Compteur
-          Row(
-            children: [
-              const Icon(Icons.place_outlined, size: 14, color: terracotta),
-              const SizedBox(width: 4),
-              Text(
-                '$visibleCount / $totalCount obs.',
-                style: GoogleFonts.karla(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: textSecondary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Catégories
           categoriesAsync.when(
             loading: () => const SizedBox(height: 28),
             error: (_, _) => const SizedBox.shrink(),
@@ -325,7 +732,6 @@ class _FiltersBar extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 4),
-          // Raretés
           _ChipsRow(
             children: [
               _FilterChip(
@@ -343,7 +749,6 @@ class _FiltersBar extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 4),
-          // Observateurs
           observersAsync.when(
             loading: () => const SizedBox(height: 28),
             error: (_, _) => const SizedBox.shrink(),
@@ -400,6 +805,7 @@ class _ChipsRow extends StatelessWidget {
       height: 28,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         itemCount: children.length,
         separatorBuilder: (_, _) => const SizedBox(width: 6),
         itemBuilder: (_, i) => children[i],
@@ -448,4 +854,3 @@ class _FilterChip extends StatelessWidget {
     );
   }
 }
-
