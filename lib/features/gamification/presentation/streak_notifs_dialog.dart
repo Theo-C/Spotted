@@ -63,7 +63,7 @@ class _StreakOptInDialogState extends ConsumerState<StreakOptInDialog> {
         ],
       ),
       content: Text(
-        "Activer un petit rappel à 20:00 chaque jour, pour ne pas casser ta "
+        "Activer un petit rappel à 13:00 chaque jour, pour ne pas casser ta "
         "série quand tu oublies. Tu peux changer d'avis à tout moment dans le Profil.",
         style: GoogleFonts.karla(
           fontSize: 13,

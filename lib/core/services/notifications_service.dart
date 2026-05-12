@@ -6,7 +6,7 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 /// Rappel quotidien pour entretenir la série naturaliste.
-/// Notification locale (pas FCM), programmée à 20:00 heure locale.
+/// Notification locale (pas FCM), programmée à 13:00 heure locale.
 /// L'user opt-in via une dialog à la 1ère ouverture (cf. onboarding) et peut
 /// activer/désactiver à tout moment dans le Profil.
 class NotificationsService {
@@ -15,8 +15,10 @@ class NotificationsService {
   static const _channelId = 'streak_reminder';
   static const _streakNotifId = 1001;
 
-  /// Heure locale du rappel (20:00). En dur pour le MVP — pas de picker.
-  static const _reminderHour = 20;
+  /// Heure locale du rappel (13:00). Pause déjeuner / début d'après-midi :
+  /// fenêtre où l'on est encore dispo pour aller dehors prendre une obs.
+  /// En dur pour le MVP — pas de picker.
+  static const _reminderHour = 13;
 
   final _plugin = FlutterLocalNotificationsPlugin();
 
@@ -73,7 +75,7 @@ class NotificationsService {
     await prefs.setBool(_kEnabled, false);
   }
 
-  /// (Re)planifie la notif daily à 20:00 locale. Appelé à la fois par enable()
+  /// (Re)planifie la notif daily à 13:00 locale. Appelé à la fois par enable()
   /// et par le boot de l'app si l'user avait déjà opt-in (pour rafraîchir la
   /// timezone et resync après éventuel reboot device).
   Future<void> _scheduleDaily() async {

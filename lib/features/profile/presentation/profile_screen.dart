@@ -645,7 +645,7 @@ class _AuthEmailLine extends StatelessWidget {
   }
 }
 
-/// Switch "Rappel quotidien série" : enable/disable la notif locale à 20:00.
+/// Switch "Rappel quotidien série" : enable/disable la notif locale à 13:00.
 class _StreakNotifsTile extends ConsumerWidget {
   const _StreakNotifsTile();
 
@@ -673,7 +673,7 @@ class _StreakNotifsTile extends ConsumerWidget {
                   ),
                 ),
                 Text(
-                  'Notification à 20:00 pour entretenir ta série',
+                  'Notification à 13:00 pour entretenir ta série',
                   style: GoogleFonts.karla(
                     fontSize: 11,
                     fontStyle: FontStyle.italic,
