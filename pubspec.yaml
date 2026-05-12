@@ -43,6 +43,14 @@ dependencies:
   # par image en base64 — les photos modernes font souvent 8-12 MB).
   flutter_image_compress: ^2.3.0
 
+  # Notifications locales pour rappeler à l'user de faire son obs
+  # quotidienne (entretien de la série). Scheduling local, pas FCM.
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
+
+  # Confetti pour les animations d'unlock badge / level-up.
+  confetti: ^0.7.0
+
   # Position courante de l'utilisateur (bouton "ma position" sur les cartes)
   geolocator: ^13.0.2
 
