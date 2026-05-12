@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
@@ -14,7 +15,6 @@ import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/data/gamification_state_provider.dart';
 import '../../gamification/domain/badge.dart';
 import '../../gamification/domain/level.dart';
-import '../../gamification/presentation/badges_section.dart';
 import '../../observations/data/observations_for_map_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -466,7 +466,7 @@ class _BadgesTeaser extends ConsumerWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => _openBadgesSheet(context),
+        onTap: () => context.push('/badges'),
         child: Container(
           padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
           decoration: BoxDecoration(
@@ -559,43 +559,6 @@ class _BadgesTeaser extends ConsumerWidget {
     );
   }
 
-  void _openBadgesSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: surfaceBase,
-      useRootNavigator: false,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => DraggableScrollableSheet(
-        initialChildSize: 0.85,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
-        expand: false,
-        builder: (_, scrollCtrl) => Column(
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8E0CE),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                controller: scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-                child: const BadgesSection(),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _BadgePreviewBubble extends StatelessWidget {

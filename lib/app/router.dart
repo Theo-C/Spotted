@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../core/services/onboarding_service.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/gamification/presentation/badges_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
 import '../features/observations/presentation/new_observation_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
@@ -74,6 +75,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => SpeciesEditorScreen(
           speciesId: state.pathParameters['sid']!,
         ),
+      ),
+      GoRoute(
+        path: '/badges',
+        builder: (_, _) => const BadgesScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
