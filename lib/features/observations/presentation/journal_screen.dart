@@ -219,8 +219,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     final map = _map;
     if (map == null) return;
 
+    // Tolérance tactile : 12 px autour du point de tap (au lieu d'un seul
+    // pixel) — un cluster ou un point individuel ne fait que 16-28 px,
+    // facile à rater au doigt si la cible est exacte.
+    const tol = 12.0;
+    final touch = ctx.touchPosition;
+    final box = ScreenBox(
+      min: ScreenCoordinate(x: touch.x - tol, y: touch.y - tol),
+      max: ScreenCoordinate(x: touch.x + tol, y: touch.y + tol),
+    );
     final results = await map.queryRenderedFeatures(
-      RenderedQueryGeometry.fromScreenCoordinate(ctx.touchPosition),
+      RenderedQueryGeometry.fromScreenBox(box),
       RenderedQueryOptions(
         layerIds: [_layerClusters, _layerPoint],
         filter: null,
