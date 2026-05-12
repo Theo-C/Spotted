@@ -1864,6 +1864,12 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
   double? _lastReportedLat;
   double? _lastReportedLng;
 
+  /// True dès que l'user a pan/scroll la carte. Avant ça, le 1er MapIdle
+  /// rapporterait la position par défaut (Compiègne quand le parent n'a pas
+  /// fourni de lat/lng) au parent, qui croirait que c'est un choix manuel
+  /// → fausse zone détectée. On ne rapporte donc qu'après interaction.
+  bool _userInteracted = false;
+
   @override
   void initState() {
     super.initState();
@@ -1906,6 +1912,12 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
   }
 
   Future<void> _onMapIdle(MapIdleEventData _) async {
+    // 1er MapIdle après chargement de la carte : si l'user n'a rien fait,
+    // c'est juste Mapbox qui s'est posé sur la position par défaut. On ne
+    // reporte pas — sinon le parent considère que (Compiègne) est un choix
+    // de l'user et résout la zone "Oise" alors qu'aucune position réelle
+    // n'a été fournie.
+    if (!_userInteracted) return;
     final map = _map;
     if (map == null) return;
     final state = await map.getCameraState();
@@ -1974,6 +1986,10 @@ class _MiniMapPickerState extends State<_MiniMapPicker> {
               styleUri: MapboxStyles.OUTDOORS,
               onMapCreated: _onMapCreated,
               onMapIdleListener: _onMapIdle,
+              // Tout scroll/pan = interaction utilisateur. Active la reporting
+              // côté _onMapIdle (qui était sinon mute pour éviter le bug
+              // "défaut Compiègne reporté au mount").
+              onScrollListener: (_) => _userInteracted = true,
               gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
                 Factory<OneSequenceGestureRecognizer>(
                   EagerGestureRecognizer.new,
