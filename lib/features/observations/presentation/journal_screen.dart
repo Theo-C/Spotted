@@ -58,6 +58,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   /// reset la caméra. On le construit une fois.
   late final CameraViewportState _initialViewport;
 
+  /// Flag pour ne recadrer automatiquement qu'au 1er chargement non-vide.
+  /// Sans ça, chaque ajout d'obs ré-écraserait le pan/zoom manuel de l'user.
+  bool _didInitialFit = false;
+
   static const _sourceId = 'obs';
   static const _layerClusters = 'obs-clusters';
   static const _layerClusterCount = 'obs-cluster-count';
@@ -204,6 +208,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     });
 
     await map.style.setStyleSourceProperty(_sourceId, 'data', geoJson);
+
+    // Au tout 1er render non-vide on recentre la caméra sur l'enveloppe des
+    // obs pour que l'user voie ses points directement (vs la vue par défaut
+    // sur Compiègne). Pas d'animation : on snap, c'est l'état initial.
+    if (!_didInitialFit && filtered.isNotEmpty) {
+      _didInitialFit = true;
+      await _fitVisibleBounds(animated: false);
+    }
   }
 
   String _emptyGeoJson() => jsonEncode({
@@ -324,26 +336,34 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   }
 
   /// Centre la caméra sur l'enveloppe des obs visibles (filtres appliqués).
-  /// Utile pour "Voir toutes mes obs" en un tap.
-  Future<void> _fitVisibleBounds() async {
+  /// Utile pour le bouton "Voir toutes mes obs" et pour le 1er fit automatique
+  /// au chargement de la carte. [animated] = true par défaut pour les actions
+  /// utilisateur ; false pour le fit initial qui doit snap directement.
+  Future<void> _fitVisibleBounds({bool animated = true}) async {
     final map = _map;
     if (map == null) return;
     final items =
         ref.read(allObservationsForMapProvider).asData?.value ?? const [];
     final filtered = items.where(_matchesFilters).toList();
     if (filtered.isEmpty) {
-      _snackbar('Aucune observation à recadrer.');
+      if (animated) _snackbar('Aucune observation à recadrer.');
       return;
     }
+
+    Future<void> apply(CameraOptions options) async {
+      if (animated) {
+        await map.flyTo(options, MapAnimationOptions(duration: 600));
+      } else {
+        await map.setCamera(options);
+      }
+    }
+
     if (filtered.length == 1) {
       final i = filtered.first;
-      await map.flyTo(
-        CameraOptions(
-          center: Point(coordinates: Position(i.obs.longitude, i.obs.latitude)),
-          zoom: 13,
-        ),
-        MapAnimationOptions(duration: 600),
-      );
+      await apply(CameraOptions(
+        center: Point(coordinates: Position(i.obs.longitude, i.obs.latitude)),
+        zoom: 13,
+      ));
       return;
     }
     var minLat = double.infinity, maxLat = -double.infinity;
@@ -366,7 +386,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       null,
       null,
     );
-    await map.flyTo(camera, MapAnimationOptions(duration: 600));
+    await apply(camera);
   }
 
   Future<void> _cycleStyle() async {
