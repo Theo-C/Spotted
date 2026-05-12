@@ -9,16 +9,36 @@ import '../../../core/utils/env.dart';
 import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/domain/level.dart';
+import '../../gamification/presentation/badge_unlock_overlay.dart';
+import '../../gamification/presentation/daily_quests_section.dart';
+import '../../gamification/presentation/streak_card.dart';
+import '../../gamification/presentation/streak_notifs_dialog.dart';
 import '../data/territory_progress_provider.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Affiche la dialog d'opt-in pour le rappel série la 1ère fois.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      StreakOptInDialog.showIfNeeded(context, ref);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
+      body: BadgeUnlockOverlay(
+        child: SafeArea(
+          child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -26,6 +46,10 @@ class HomeScreen extends ConsumerWidget {
               const _Header(),
               const SizedBox(height: 12),
               const _CameraGpsTipCard(),
+              const SizedBox(height: 12),
+              const StreakCard(),
+              const SizedBox(height: 12),
+              const DailyQuestsSection(),
               const SizedBox(height: 12),
               _LevelCard(levelAsync: ref.watch(accountLevelProvider)),
               const SizedBox(height: 20),
@@ -55,6 +79,7 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: 24),
             ],
           ),
+        ),
         ),
       ),
     );
