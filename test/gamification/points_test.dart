@@ -129,4 +129,67 @@ void main() {
     test('epic = 3', () => expect(rarityStars(Rarity.epic), 3));
     test('legendary = 4', () => expect(rarityStars(Rarity.legendary), 4));
   });
+
+  group('observationPoints + streakMultiplier', () {
+    test('mult 1.0 (pas de série) = comportement nominal', () {
+      // common 1ʳᵉ sans photo = 10
+      expect(
+        observationPoints(
+          rarity: Rarity.common,
+          isFirst: true,
+          hasPhoto: false,
+        ),
+        10,
+      );
+    });
+
+    test('mult 1.10 (palier J7) sur common 1ʳᵉ photo = 17 (15 × 1.10 round)', () {
+      expect(
+        observationPoints(
+          rarity: Rarity.common,
+          isFirst: true,
+          hasPhoto: true,
+          streakMultiplier: 1.10,
+        ),
+        17,
+      );
+    });
+
+    test('mult 1.25 (palier J30) sur épique 1ʳᵉ photo = 188 (150 × 1.25)', () {
+      expect(
+        observationPoints(
+          rarity: Rarity.epic,
+          isFirst: true,
+          hasPhoto: true,
+          streakMultiplier: 1.25,
+        ),
+        188,
+      );
+    });
+
+    test('mult 1.5 (palier J100) sur légendaire 1ʳᵉ photo = 675 (450 × 1.5)', () {
+      expect(
+        observationPoints(
+          rarity: Rarity.legendary,
+          isFirst: true,
+          hasPhoto: true,
+          streakMultiplier: 1.5,
+        ),
+        675,
+      );
+    });
+
+    test('mult appliqué aussi aux re-obs', () {
+      // rare re-obs sans photo = 6 ; ×1.5 → 9
+      expect(
+        observationPoints(
+          rarity: Rarity.rare,
+          isFirst: false,
+          hasPhoto: false,
+          streakMultiplier: 1.5,
+        ),
+        9,
+      );
+    });
+  });
 }

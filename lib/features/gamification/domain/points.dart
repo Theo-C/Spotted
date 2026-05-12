@@ -20,15 +20,22 @@ int withPhotoBonus(int basePoints) =>
     (basePoints * 1.5).round();
 
 /// Combo helper — points crédités pour une obs donnée.
+///
+/// [streakMultiplier] : bonus série courante (1.0 = pas de bonus, 1.5 = +50%).
+/// Appliqué EN DERNIER, après les bonus rareté et photo, pour que le bonus
+/// série amplifie tout le reste (cf. CLAUDE.md §règles métier).
 int observationPoints({
   required Rarity rarity,
   required bool isFirst,
   required bool hasPhoto,
+  double streakMultiplier = 1.0,
 }) {
   final base = isFirst
       ? firstObservationPoints(rarity)
       : reobservationPoints(rarity);
-  return hasPhoto ? withPhotoBonus(base) : base;
+  final withPhoto = hasPhoto ? withPhotoBonus(base) : base;
+  if (streakMultiplier == 1.0) return withPhoto;
+  return (withPhoto * streakMultiplier).round();
 }
 
 /// Bonus rétroactif si on ajoute une photo à une 1ʳᵉ obs déjà validée
