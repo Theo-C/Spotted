@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/services/notifications_service.dart';
+import 'core/services/onboarding_service.dart';
 import 'core/utils/env.dart';
 
 Future<void> main() async {
@@ -24,6 +25,10 @@ Future<void> main() async {
   );
 
   MapboxOptions.setAccessToken(Env.mapboxAccessToken);
+
+  // Pré-charge l'état d'onboarding pour que le router puisse rediriger
+  // vers /onboarding de façon synchrone au 1er build.
+  await OnboardingService.instance.init();
 
   // Si l'user avait activé les notifs de série, on reschedule au boot.
   // Best-effort : on log silencieusement les erreurs pour ne pas bloquer le startup.

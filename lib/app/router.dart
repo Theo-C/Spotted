@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/services/onboarding_service.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
 import '../features/observations/presentation/new_observation_screen.dart';
+import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
 import '../features/species/presentation/species_detail_screen.dart';
@@ -18,22 +20,44 @@ import 'app_shell.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final auth = ref.watch(authRepositoryProvider);
+  final onboarding = ref.watch(onboardingServiceProvider);
 
   return GoRouter(
     initialLocation: '/',
-    refreshListenable: _GoRouterRefreshStream(auth.authStateChanges),
+    // Listenable.merge réveille le router à la fois sur changement d'auth et
+    // de statut onboarding (notifyListeners appelé par markComplete).
+    refreshListenable: Listenable.merge([
+      _GoRouterRefreshStream(auth.authStateChanges),
+      onboarding,
+    ]),
     redirect: (context, state) {
       final isLoggedIn = auth.currentAuthUser != null;
-      final isOnLogin = state.matchedLocation == '/login';
+      final loc = state.matchedLocation;
+      final isOnLogin = loc == '/login';
+      final isOnOnboarding = loc == '/onboarding';
 
       if (!isLoggedIn && !isOnLogin) return '/login';
       if (isLoggedIn && isOnLogin) return '/';
+
+      // Onboarding : tant qu'il n'est pas terminé, on force l'écran dédié.
+      // L'état est pré-chargé au boot via OnboardingService.init() dans
+      // main.dart — pas de race au 1er build.
+      if (isLoggedIn && !onboarding.completed && !isOnOnboarding) {
+        return '/onboarding';
+      }
+      if (isLoggedIn && onboarding.completed && isOnOnboarding) {
+        return '/';
+      }
       return null;
     },
     routes: [
       GoRoute(
         path: '/login',
         builder: (_, _) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/onboarding',
+        builder: (_, _) => const OnboardingScreen(),
       ),
       GoRoute(
         path: '/observation/new',

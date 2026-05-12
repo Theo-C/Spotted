@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
-import '../../../core/services/onboarding_service.dart';
 import '../../../core/utils/env.dart';
 import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
@@ -12,178 +11,58 @@ import '../../gamification/domain/level.dart';
 import '../../gamification/presentation/badge_unlock_overlay.dart';
 import '../../gamification/presentation/daily_quests_section.dart';
 import '../../gamification/presentation/streak_card.dart';
-import '../../gamification/presentation/streak_notifs_dialog.dart';
 import '../data/territory_progress_provider.dart';
 
-class HomeScreen extends ConsumerStatefulWidget {
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  ConsumerState<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends ConsumerState<HomeScreen> {
-  @override
-  void initState() {
-    super.initState();
-    // Affiche la dialog d'opt-in pour le rappel série la 1ère fois.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      StreakOptInDialog.showIfNeeded(context, ref);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       body: BadgeUnlockOverlay(
         child: SafeArea(
           child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const _Header(),
-              const SizedBox(height: 12),
-              const _CameraGpsTipCard(),
-              const SizedBox(height: 12),
-              const StreakCard(),
-              const SizedBox(height: 12),
-              const DailyQuestsSection(),
-              const SizedBox(height: 12),
-              _LevelCard(levelAsync: ref.watch(accountLevelProvider)),
-              const SizedBox(height: 20),
-              const _SectionLabel(text: 'Mes terrains'),
-              const SizedBox(height: 8),
-              _TerritoryCard(
-                shortCode: '60',
-                displayName: 'Oise',
-                badge: 'DOMICILE',
-                badgeColor: forestGreen,
-                centerLat: 49.41,
-                centerLng: 2.82,
-                progressAsync: ref.watch(zoneProgressProvider('60')),
-                zoneAsync: ref.watch(zoneByShortCodeProvider('60')),
-              ),
-              const SizedBox(height: 12),
-              _TerritoryCard(
-                shortCode: '02',
-                displayName: 'Aisne',
-                badge: 'VOISIN',
-                badgeColor: terracotta,
-                centerLat: 49.45,
-                centerLng: 3.62,
-                progressAsync: ref.watch(zoneProgressProvider('02')),
-                zoneAsync: ref.watch(zoneByShortCodeProvider('02')),
-              ),
-              const SizedBox(height: 24),
-            ],
-          ),
-        ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Tip dismissible affiché tant que l'user n'a pas confirmé qu'il a activé
-/// l'enregistrement de la localisation dans son app caméra. Persisté local
-/// via `shared_preferences` (cf. OnboardingService).
-class _CameraGpsTipCard extends ConsumerWidget {
-  const _CameraGpsTipCard();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final visibleAsync = ref.watch(cameraGpsTipVisibleProvider);
-    return visibleAsync.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (visible) {
-        if (!visible) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  gold.withValues(alpha: 0.10),
-                  gold.withValues(alpha: 0.20),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: gold, width: 1.2),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(Icons.lightbulb_outline,
-                    size: 18, color: gold),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Avant ta première sortie',
-                        style: GoogleFonts.cormorantGaramond(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: forestGreen,
-                          height: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "Active « Enregistrer la localisation » dans ton app caméra "
-                        "(Open Camera, Google Camera, etc.) pour que les coordonnées "
-                        "soient lues automatiquement à l'import.",
-                        style: GoogleFonts.karla(
-                          fontSize: 12,
-                          color: textPrimary,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: () async {
-                            await ref
-                                .read(onboardingServiceProvider)
-                                .markCameraGpsTipSeen();
-                            ref.invalidate(cameraGpsTipVisibleProvider);
-                          },
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 0,
-                              vertical: 0,
-                            ),
-                            minimumSize: Size.zero,
-                            tapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          child: Text(
-                            "C'EST FAIT",
-                            style: GoogleFonts.karla(
-                              fontSize: 11,
-                              letterSpacing: 1.5,
-                              fontWeight: FontWeight.bold,
-                              color: forestGreen,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                const _Header(),
+                const SizedBox(height: 12),
+                const StreakCard(),
+                const SizedBox(height: 12),
+                const DailyQuestsSection(),
+                const SizedBox(height: 12),
+                _LevelCard(levelAsync: ref.watch(accountLevelProvider)),
+                const SizedBox(height: 20),
+                const _SectionLabel(text: 'Mes terrains'),
+                const SizedBox(height: 8),
+                _TerritoryCard(
+                  shortCode: '60',
+                  displayName: 'Oise',
+                  badge: 'DOMICILE',
+                  badgeColor: forestGreen,
+                  centerLat: 49.41,
+                  centerLng: 2.82,
+                  progressAsync: ref.watch(zoneProgressProvider('60')),
+                  zoneAsync: ref.watch(zoneByShortCodeProvider('60')),
                 ),
+                const SizedBox(height: 12),
+                _TerritoryCard(
+                  shortCode: '02',
+                  displayName: 'Aisne',
+                  badge: 'VOISIN',
+                  badgeColor: terracotta,
+                  centerLat: 49.45,
+                  centerLng: 3.62,
+                  progressAsync: ref.watch(zoneProgressProvider('02')),
+                  zoneAsync: ref.watch(zoneByShortCodeProvider('02')),
+                ),
+                const SizedBox(height: 24),
               ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }

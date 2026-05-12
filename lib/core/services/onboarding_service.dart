@@ -1,30 +1,44 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Persistance locale des flags "tip déjà vu / onboarding fait".
-/// Pas de besoin de sync cloud — c'est de l'UX local.
-class OnboardingService {
-  static const _kCameraGpsTipSeen = 'tip_camera_gps_seen';
+/// État d'onboarding persisté localement. Singleton car le router doit pouvoir
+/// le watcher de façon synchrone (Listenable) — on pré-charge depuis
+/// SharedPreferences au boot via [init] avant le runApp.
+///
+/// Pas de besoin de sync cloud — c'est de l'UX local par device.
+class OnboardingService extends ChangeNotifier {
+  OnboardingService._();
 
-  Future<bool> hasSeenCameraGpsTip() async {
+  static final OnboardingService instance = OnboardingService._();
+
+  static const _kOnboardingComplete = 'onboarding_complete_v1';
+
+  bool _completed = false;
+  bool _loaded = false;
+
+  bool get completed => _completed;
+  bool get loaded => _loaded;
+
+  /// À appeler une fois au boot avant runApp pour pré-charger l'état.
+  /// Sans ça le router ne sait pas s'il doit rediriger vers /onboarding.
+  Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_kCameraGpsTipSeen) ?? false;
+    _completed = prefs.getBool(_kOnboardingComplete) ?? false;
+    _loaded = true;
+    notifyListeners();
   }
 
-  Future<void> markCameraGpsTipSeen() async {
+  /// Marque l'onboarding comme terminé. Le router redirect notifie alors
+  /// vers / (l'écran Home).
+  Future<void> markComplete() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kCameraGpsTipSeen, true);
+    await prefs.setBool(_kOnboardingComplete, true);
+    _completed = true;
+    notifyListeners();
   }
 }
 
 final onboardingServiceProvider = Provider<OnboardingService>((ref) {
-  return OnboardingService();
-});
-
-/// True tant que l'utilisateur n'a pas dismiss le tip "active la géoloc cam".
-/// Permet de rebuild la Home quand on dismiss (via invalidate).
-final cameraGpsTipVisibleProvider = FutureProvider<bool>((ref) async {
-  final seen =
-      await ref.watch(onboardingServiceProvider).hasSeenCameraGpsTip();
-  return !seen;
+  return OnboardingService.instance;
 });
