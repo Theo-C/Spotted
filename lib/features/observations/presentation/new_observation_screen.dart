@@ -75,11 +75,206 @@ class _NewObservationScreenState
   bool _identifying = false;
   bool _suggestionDismissed = false;
 
+  // -----------------------------------------------------------
+  // Photo-first : résolution territoriale dès que la position est connue,
+  // au lieu d'attendre le submit. Évite le dialog rareté surprise au save.
+  // -----------------------------------------------------------
+
+  /// État de la résolution de zone — null tant qu'aucune position n'a été
+  /// fournie (ni EXIF GPS, ni map picker manuel).
+  _ZoneResolution? _zoneResolution;
+
+  /// Rareté de l'espèce courante dans la zone détectée, lue depuis
+  /// species_zones. Null si l'espèce n'est pas encore curée pour cette zone
+  /// (cas où on demande à l'user de choisir inline) OU si la résolution n'a
+  /// pas encore tourné.
+  Rarity? _speciesLocalRarity;
+
+  /// Choix utilisateur via le sélecteur de rareté inline. Utilisé quand
+  /// _speciesLocalRarity est null et que l'user a tapé un des 4 boutons.
+  /// À l'insertion, on crée la ligne species_zones manquante avec cette valeur.
+  Rarity? _userPickedRarity;
+
+  /// True pendant l'aller-retour Supabase pour récupérer la rareté locale.
+  bool _resolvingRarity = false;
+
+  /// Tokens monotones pour éviter qu'une résolution lente ne sur-écrive
+  /// une résolution plus récente (course classique : photo A → photo B
+  /// dans 200 ms, la réponse pour A arrive après B → fausse l'UI).
+  int _zoneToken = 0;
+  int _rarityToken = 0;
+
   @override
   void initState() {
     super.initState();
     _selectedSpeciesId = widget.preselectedSpeciesId;
   }
+
+  // -----------------------------------------------------------
+  // Résolution territoriale (photo-first)
+  // -----------------------------------------------------------
+
+  /// Lance la résolution de zone à partir de (_lat, _lng). Appelé après
+  /// chaque changement de position (photo importée, map picker bougé).
+  /// Idempotent — un appel concurrent invalide le précédent via _zoneToken.
+  Future<void> _resolveZone() async {
+    final myToken = ++_zoneToken;
+    if (_lat == null || _lng == null) {
+      setState(() {
+        _zoneResolution = null;
+      });
+      // La rareté dépend de la zone : on réinvalide aussi.
+      await _resolveSpeciesRarity();
+      return;
+    }
+    setState(() {
+      _zoneResolution = const _ZoneResolving();
+    });
+
+    try {
+      final lat = _lat!;
+      final lng = _lng!;
+      final geocoding = await ref
+          .read(geocodingServiceProvider)
+          .reverseGeocode(lat: lat, lng: lng);
+      if (myToken != _zoneToken || !mounted) return;
+
+      // 1. Geocoding totalement raté.
+      if (geocoding == null ||
+          (geocoding.country == null &&
+              geocoding.region == null &&
+              geocoding.place == null)) {
+        setState(() {
+          _zoneResolution = const _ZoneError(
+            'Impossible de déterminer le lieu. Vérifie ta connexion ou repositionne le marqueur.',
+          );
+        });
+        await _resolveSpeciesRarity();
+        return;
+      }
+
+      // 2. Hors France.
+      final country = geocoding.country;
+      if (country != null && country != 'France') {
+        setState(() {
+          _zoneResolution = _ZoneError(
+            'Position en « $country ». Seules les zones France curées sont supportées.',
+          );
+        });
+        await _resolveSpeciesRarity();
+        return;
+      }
+
+      // 3. Lookup de la zone curée par nom de région (= département en v6).
+      final zones = await ref.read(zoneRepositoryProvider).getAll();
+      if (myToken != _zoneToken || !mounted) return;
+      final region = geocoding.region;
+      final matched = zones.cast<Zone?>().firstWhere(
+            (z) => z!.name == region,
+            orElse: () => null,
+          );
+      if (matched == null) {
+        setState(() {
+          _zoneResolution = _ZoneError(
+            'Position en « ${region ?? 'région inconnue'} ». '
+            'Zones curées : ${zones.map((z) => z.name).join(', ')}. '
+            'Repositionne le marqueur.',
+          );
+        });
+        await _resolveSpeciesRarity();
+        return;
+      }
+      setState(() {
+        _zoneResolution = _ZoneResolved(
+          zone: matched,
+          placeLabel: geocoding.displayName,
+        );
+      });
+      await _resolveSpeciesRarity();
+    } catch (e) {
+      if (myToken == _zoneToken && mounted) {
+        setState(() {
+          _zoneResolution = _ZoneError('Erreur de résolution : $e');
+        });
+      }
+    }
+  }
+
+  /// Lance la résolution de rareté locale (species_zones lookup) dès qu'une
+  /// espèce ET une zone résolue OK sont en place. Si la paire n'est pas
+  /// curée, on bascule l'UI en mode "choisis la rareté localement" via le
+  /// sélecteur inline.
+  Future<void> _resolveSpeciesRarity() async {
+    final myToken = ++_rarityToken;
+    final zone = _zoneResolution is _ZoneResolved
+        ? (_zoneResolution as _ZoneResolved).zone
+        : null;
+    if (zone == null || _selectedSpeciesId == null) {
+      setState(() {
+        _speciesLocalRarity = null;
+        _userPickedRarity = null;
+        _resolvingRarity = false;
+      });
+      return;
+    }
+    setState(() {
+      _resolvingRarity = true;
+      _speciesLocalRarity = null;
+      _userPickedRarity = null;
+    });
+    try {
+      final row = await ref
+          .read(supabaseClientProvider)
+          .from('species_zones')
+          .select('rarity')
+          .eq('species_id', _selectedSpeciesId!)
+          .eq('zone_id', zone.id)
+          .maybeSingle();
+      if (myToken != _rarityToken || !mounted) return;
+      if (row != null) {
+        setState(() {
+          _speciesLocalRarity = Rarity.values
+              .firstWhere((r) => r.name == (row['rarity'] as String));
+          _resolvingRarity = false;
+        });
+      } else {
+        // Pré-remplit le picker avec la rareté trouvée dans une autre zone
+        // si dispo, sinon commun. L'user peut changer librement.
+        final any = await ref
+            .read(supabaseClientProvider)
+            .from('species_zones')
+            .select('rarity')
+            .eq('species_id', _selectedSpeciesId!)
+            .limit(1)
+            .maybeSingle();
+        if (myToken != _rarityToken || !mounted) return;
+        final hint = any != null
+            ? Rarity.values
+                .firstWhere((r) => r.name == (any['rarity'] as String))
+            : Rarity.common;
+        setState(() {
+          _resolvingRarity = false;
+          _userPickedRarity = hint;
+        });
+      }
+    } catch (e) {
+      if (myToken == _rarityToken && mounted) {
+        setState(() => _resolvingRarity = false);
+      }
+    }
+  }
+
+  /// Rareté effective utilisée au submit : la lecture BDD prime, sinon le
+  /// choix manuel de l'user. Null si rien n'est résolu — bloque le submit.
+  Rarity? get _effectiveRarity => _speciesLocalRarity ?? _userPickedRarity;
+
+  /// True si on attend de l'user qu'il choisisse une rareté dans le
+  /// sélecteur inline (zone OK, espèce choisie, mais paire pas en BDD).
+  bool get _needsRarityPicker =>
+      _zoneResolution is _ZoneResolved &&
+      _selectedSpeciesId != null &&
+      !_resolvingRarity &&
+      _speciesLocalRarity == null;
 
   Future<void> _pickPhoto() async {
     final picked =
@@ -97,6 +292,11 @@ class _NewObservationScreenState
       _suggestionDismissed = false;
       _identifying = false;
     });
+    // Photo-first : on lance la résolution territoriale tout de suite (au lieu
+    // d'attendre le submit). Si la photo a un EXIF GPS, on saura immédiatement
+    // si on est dans une zone curée ; sinon le banner dira "place le point
+    // sur la carte" et le user bouge la mini-carte.
+    unawaited(_resolveZone());
     // L'IA n'est plus auto-lancée au pick — l'user clique sur le bouton
     // "Identifier avec l'IA" s'il veut une suggestion (cf. _triggerIdentification).
     // Ça évite la facture quand on connaît déjà l'espèce ou qu'on est offline.
@@ -180,6 +380,7 @@ class _NewObservationScreenState
 
     if (match != null) {
       setState(() => _selectedSpeciesId = match.species.id);
+      unawaited(_resolveSpeciesRarity());
     } else {
       // Espèce non curée → dialog d'ajout in-place.
       final newId = await showDialog<String>(
@@ -192,6 +393,7 @@ class _NewObservationScreenState
         ref.invalidate(speciesByCategoryInZoneProvider);
         ref.invalidate(categoriesWithProgressProvider);
         setState(() => _selectedSpeciesId = newId);
+        unawaited(_resolveSpeciesRarity());
       }
     }
   }
@@ -218,14 +420,44 @@ class _NewObservationScreenState
       ),
       builder: (_) => _SpeciesPickerSheet(zoneId: oise.id),
     );
-    if (result != null) setState(() => _selectedSpeciesId = result);
+    if (result != null) {
+      setState(() => _selectedSpeciesId = result);
+      unawaited(_resolveSpeciesRarity());
+    }
   }
 
   Future<void> _submit() async {
+    // Validations basées sur l'état pré-résolu (photo-first). Pas de surprise
+    // au save : zone et rareté sont déjà connues à ce stade.
+    if (_zoneResolution == null) {
+      setState(() => _error =
+          'Ajoute une photo géolocalisée ou place le point sur la carte.');
+      return;
+    }
+    if (_zoneResolution is _ZoneResolving) {
+      setState(() => _error = 'Résolution territoriale en cours…');
+      return;
+    }
+    if (_zoneResolution is _ZoneError) {
+      setState(() => _error = (_zoneResolution as _ZoneError).message);
+      return;
+    }
+    final detectedZone = (_zoneResolution as _ZoneResolved).zone;
+
     if (_selectedSpeciesId == null) {
       setState(() => _error = 'Choisis une espèce.');
       return;
     }
+    if (_resolvingRarity) {
+      setState(() => _error = 'Lecture de la rareté en cours…');
+      return;
+    }
+    final rarity = _effectiveRarity;
+    if (rarity == null) {
+      setState(() => _error = 'Choisis la rareté locale de cette espèce.');
+      return;
+    }
+
     final observerId = ref.read(currentAuthUserProvider)?.id;
     if (observerId == null) {
       setState(() => _error = 'Pas d\'utilisateur connecté.');
@@ -238,127 +470,18 @@ class _NewObservationScreenState
     try {
       final client = ref.read(supabaseClientProvider);
       final speciesId = _selectedSpeciesId!;
-      final lat = _lat ?? 49.41; // centre approximatif Oise (fallback EXIF absent)
-      final lng = _lng ?? 2.82;
+      final lat = _lat!;
+      final lng = _lng!;
 
-      // Détection territoire dynamique : on lookup la zone curée correspondant
-      // au département détecté par geocoding. Bloque si hors France ou région
-      // pas curée. Photo sans GPS → fallback Oise (centre par défaut).
-      Zone detectedZone;
-      if (_lat != null && _lng != null) {
-        final geocoding = await ref
-            .read(geocodingServiceProvider)
-            .reverseGeocode(lat: _lat!, lng: _lng!);
-        final country = geocoding?.country;
-        final region = geocoding?.region;
-
-        // 1. Geocoding totalement raté → on bloque (sécurité).
-        if (geocoding == null ||
-            (country == null && region == null && geocoding.place == null)) {
-          if (mounted) {
-            setState(() {
-              _submitting = false;
-              _error =
-                  'Impossible de déterminer le lieu. Vérifie ta connexion et réessaie, ou repositionne le marqueur sur la mini-carte.';
-            });
-          }
-          return;
-        }
-
-        // 2. Hors France → bloque.
-        if (country != null && country != 'France') {
-          if (mounted) {
-            setState(() {
-              _submitting = false;
-              _error =
-                  'Cette position est en « $country ». Seules les zones France curées sont supportées.';
-            });
-          }
-          return;
-        }
-
-        // 3. Lookup zone curée par nom de région.
-        final zones = await ref.read(zoneRepositoryProvider).getAll();
-        final matched = zones.cast<Zone?>().firstWhere(
-              (z) => z!.name == region,
-              orElse: () => null,
-            );
-        if (matched == null) {
-          if (mounted) {
-            setState(() {
-              _submitting = false;
-              _error =
-                  'Cette position est en « ${region ?? 'région inconnue'} ». '
-                  'Zones curées pour l\'instant : ${zones.map((z) => z.name).join(', ')}. '
-                  'Repositionne le marqueur ou choisis une autre photo.';
-            });
-          }
-          return;
-        }
-        detectedZone = matched;
-      } else {
-        // Fallback : pas de GPS, défaut Oise.
-        detectedZone = await ref.read(zoneByShortCodeProvider('60').future);
-      }
-
-      // Rareté locale (de la zone détectée — peut différer entre Oise/Aisne)
-      final rarityRow = await client
-          .from('species_zones')
-          .select('rarity')
-          .eq('species_id', speciesId)
-          .eq('zone_id', detectedZone.id)
-          .maybeSingle();
-      final Rarity rarity;
-      if (rarityRow != null) {
-        rarity = Rarity.values
-            .firstWhere((r) => r.name == (rarityRow['rarity'] as String));
-      } else {
-        // Espèce pas encore curée sur cette zone (ex: Merle noir observé en
-        // Aisne mais seulement listé en Oise). On demande à l'utilisateur de
-        // confirmer la rareté locale, pré-remplie avec celle d'une autre zone
-        // curée si dispo (proba équivalente), sinon `common`. À la confirmation,
-        // on crée le lien species_zones pour que les futures obs ne repassent
-        // pas par ce dialog et que l'espèce apparaisse dans la liste de la zone.
-        final anyZoneRow = await client
-            .from('species_zones')
-            .select('rarity')
-            .eq('species_id', speciesId)
-            .limit(1)
-            .maybeSingle();
-        final defaultRarity = anyZoneRow != null
-            ? Rarity.values.firstWhere(
-                (r) => r.name == (anyZoneRow['rarity'] as String),
-              )
-            : Rarity.common;
-        final speciesForDialog =
-            await ref.read(speciesRepositoryProvider).getById(speciesId);
-        if (!mounted) return;
-        final picked = await showDialog<Rarity>(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => _PickRarityForZoneDialog(
-            speciesCommonName: speciesForDialog.commonName,
-            zoneName: detectedZone.name,
-            initialRarity: defaultRarity,
-          ),
-        );
-        if (!mounted) return;
-        if (picked == null) {
-          // User a annulé → on stoppe la création d'obs.
-          setState(() {
-            _submitting = false;
-            _error = null;
-          });
-          return;
-        }
-        rarity = picked;
+      // Si l'user a choisi la rareté inline (paire species_zones absente),
+      // on crée la ligne pour que les futures obs n'aient plus à le faire
+      // et que l'espèce apparaisse dans la liste de la zone.
+      if (_speciesLocalRarity == null && _userPickedRarity != null) {
         await client.from('species_zones').insert({
           'species_id': speciesId,
           'zone_id': detectedZone.id,
-          'rarity': rarity.name,
+          'rarity': _userPickedRarity!.name,
         });
-        // Le catalogue de la zone vient de changer → invalide les caches qui
-        // listent les espèces curées.
         ref.invalidate(speciesByCategoryInZoneProvider);
       }
 
@@ -487,10 +610,14 @@ class _NewObservationScreenState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _PhotoSlot(photo: _photo, onTap: _pickPhoto),
-            if (_photo != null && !_photo!.hasGps) ...[
-              const SizedBox(height: 12),
-              const _NoGpsTipBanner(),
-            ],
+            // Banner statut territorial — mis à jour dès qu'une position est
+            // connue (EXIF photo ou map picker), et non plus seulement au submit.
+            const SizedBox(height: 12),
+            _ZoneStatusBanner(
+              resolution: _zoneResolution,
+              hasPhoto: _photo != null,
+              photoHasGps: _photo?.hasGps ?? false,
+            ),
             if (_photo != null &&
                 _iaIdentificationEnabled &&
                 widget.preselectedSpeciesId == null &&
@@ -527,14 +654,13 @@ class _NewObservationScreenState
                   _lat = pos.lat;
                   _lng = pos.lng;
                 });
+                // Position changée → on relance la résolution territoriale
+                // pour mettre à jour le banner et la rareté si besoin.
+                unawaited(_resolveZone());
               },
             ),
             const SizedBox(height: 6),
             _CoordsField(lat: _lat, lng: _lng),
-            if (_lat != null && _lng != null) ...[
-              const SizedBox(height: 6),
-              _PlaceDisplay(lat: _lat!, lng: _lng!),
-            ],
             const SizedBox(height: 16),
             const _Label('Espèce'),
             const SizedBox(height: 6),
@@ -543,6 +669,17 @@ class _NewObservationScreenState
               locked: widget.preselectedSpeciesId != null,
               onTap: widget.preselectedSpeciesId != null ? null : _pickSpecies,
             ),
+            // Sélecteur de rareté inline — apparaît uniquement quand l'espèce
+            // choisie n'a pas de ligne species_zones pour la zone détectée.
+            // C'est là que le user pose le choix (vs ancien dialog au submit).
+            if (_needsRarityPicker) ...[
+              const SizedBox(height: 12),
+              _RarityPickerInline(
+                zoneName: (_zoneResolution as _ZoneResolved).zone.name,
+                selected: _userPickedRarity,
+                onSelected: (r) => setState(() => _userPickedRarity = r),
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 16),
               Text(
@@ -743,52 +880,6 @@ class _ReadOnlyField extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _NoGpsTipBanner extends StatelessWidget {
-  const _NoGpsTipBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: terracotta.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: terracotta.withValues(alpha: 0.4), width: 1.2),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline, size: 16, color: terracotta),
-          const SizedBox(width: 10),
-          Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: GoogleFonts.karla(
-                  fontSize: 12,
-                  color: textPrimary,
-                  height: 1.4,
-                ),
-                children: [
-                  TextSpan(
-                    text: "Pas de GPS dans cette photo. ",
-                    style: GoogleFonts.karla(fontWeight: FontWeight.bold),
-                  ),
-                  const TextSpan(
-                    text:
-                        "Active « Enregistrer la localisation » dans ton app caméra "
-                        "pour automatiser les futures obs. En attendant, ajuste la position "
-                        "manuellement sur la mini-carte ci-dessous.",
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1115,148 +1206,6 @@ class _CandidateRow extends StatelessWidget {
   }
 }
 
-/// Dialog déclenché quand on observe une espèce déjà connue mais non encore
-/// curée pour la zone détectée par geocoding (ex: Merle noir présent en Oise
-/// mais pas en Aisne avant cette obs). Demande la rareté locale, pré-remplie
-/// avec celle d'une autre zone si dispo. Renvoie la rareté choisie via
-/// Navigator.pop, ou null si l'utilisateur annule.
-class _PickRarityForZoneDialog extends StatefulWidget {
-  const _PickRarityForZoneDialog({
-    required this.speciesCommonName,
-    required this.zoneName,
-    required this.initialRarity,
-  });
-
-  final String speciesCommonName;
-  final String zoneName;
-  final Rarity initialRarity;
-
-  @override
-  State<_PickRarityForZoneDialog> createState() =>
-      _PickRarityForZoneDialogState();
-}
-
-class _PickRarityForZoneDialogState extends State<_PickRarityForZoneDialog> {
-  late Rarity _selected = widget.initialRarity;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: surfaceBase,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Première en ${widget.zoneName}',
-                style: GoogleFonts.cormorantGaramond(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
-                  color: forestGreen,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                "${widget.speciesCommonName} n'est pas encore curé dans ce territoire. "
-                "Choisis sa rareté locale pour l'ajouter au catalogue.",
-                style: GoogleFonts.karla(
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                  color: textSecondary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                "RARETÉ DANS ${widget.zoneName.toUpperCase()}",
-                style: GoogleFonts.karla(
-                  fontSize: 10,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.bold,
-                  color: textSecondary,
-                ),
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<Rarity>(
-                initialValue: _selected,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: surfaceCard,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(
-                      color: Color(0xFFE8E0CE),
-                      width: 1.5,
-                    ),
-                  ),
-                ),
-                items: Rarity.values
-                    .map(
-                      (r) => DropdownMenuItem(
-                        value: r,
-                        child: Text(_rarityLabel(r)),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (v) =>
-                    v != null ? setState(() => _selected = v) : null,
-              ),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(
-                        'Annuler',
-                        style: GoogleFonts.karla(
-                          fontSize: 13,
-                          color: textSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    flex: 2,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(_selected),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: forestGreen,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: Text(
-                        'AJOUTER',
-                        style: GoogleFonts.karla(
-                          fontSize: 12,
-                          letterSpacing: 1.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  static String _rarityLabel(Rarity r) => switch (r) {
-        Rarity.common => 'Commun',
-        Rarity.rare => 'Rare',
-        Rarity.epic => 'Épique',
-        Rarity.legendary => 'Légendaire',
-      };
-}
 
 /// Dialog d'ajout d'une espèce au catalogue d'une zone.
 /// Deux modes :
@@ -2272,64 +2221,6 @@ class _FullscreenMapPickerState extends State<_FullscreenMapPicker> {
   }
 }
 
-class _PlaceDisplay extends ConsumerWidget {
-  const _PlaceDisplay({required this.lat, required this.lng});
-
-  final double lat;
-  final double lng;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final geocodingAsync = ref.watch(
-      reverseGeocodingProvider((lat: lat, lng: lng)),
-    );
-    return geocodingAsync.when(
-      loading: () => Row(
-        children: [
-          SizedBox(
-            width: 10,
-            height: 10,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.5,
-              color: textSecondary.withValues(alpha: 0.6),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Lecture du lieu…',
-            style: GoogleFonts.karla(
-              fontSize: 11,
-              fontStyle: FontStyle.italic,
-              color: textSecondary,
-            ),
-          ),
-        ],
-      ),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (result) {
-        final name = result?.displayName;
-        if (name == null) return const SizedBox.shrink();
-        return Row(
-          children: [
-            const Icon(Icons.place_outlined, size: 14, color: terracotta),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(
-                name,
-                style: GoogleFonts.cormorantGaramond(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: forestGreen,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
 class _CoordsField extends StatelessWidget {
   const _CoordsField({this.lat, this.lng});
 
@@ -2339,7 +2230,7 @@ class _CoordsField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = (lat == null || lng == null)
-        ? "Pas de GPS dans l'EXIF — défaut centre Oise"
+        ? "Pas de position — ajoute une photo géolocalisée ou place le point"
         : '${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}';
     return _ReadOnlyField(text: text, icon: Icons.location_on_outlined);
   }
@@ -2667,4 +2558,296 @@ class _DiscoveryDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+// =============================================================
+// Banner de statut territorial (photo-first)
+// =============================================================
+//
+// Remplace l'ancien _NoGpsTipBanner + _PlaceDisplay : un seul widget qui
+// matérialise l'état de la résolution. Évite à l'user de "deviner" si la
+// position est valide — au lieu d'attendre une erreur au submit.
+
+class _ZoneStatusBanner extends StatelessWidget {
+  const _ZoneStatusBanner({
+    required this.resolution,
+    required this.hasPhoto,
+    required this.photoHasGps,
+  });
+
+  final _ZoneResolution? resolution;
+  final bool hasPhoto;
+  final bool photoHasGps;
+
+  @override
+  Widget build(BuildContext context) {
+    final res = resolution;
+    // Aucune position connue → hint "place le point sur la carte".
+    if (res == null) {
+      final msg = !hasPhoto
+          ? 'Importe une photo géolocalisée ou place le point sur la carte ci-dessous.'
+          : 'Photo sans GPS — place le point sur la carte ci-dessous.';
+      return _BannerShell(
+        color: textMuted,
+        icon: Icons.place_outlined,
+        title: 'Position requise',
+        body: msg,
+      );
+    }
+    if (res is _ZoneResolving) {
+      return _BannerShell(
+        color: textSecondary,
+        icon: Icons.hourglass_top_outlined,
+        title: 'Résolution du lieu…',
+        body: null,
+      );
+    }
+    if (res is _ZoneError) {
+      return _BannerShell(
+        color: terracotta,
+        icon: Icons.warning_amber_outlined,
+        title: 'Hors zone curée',
+        body: res.message,
+      );
+    }
+    final resolved = res as _ZoneResolved;
+    return _BannerShell(
+      color: forestGreen,
+      icon: Icons.check_circle_outline,
+      title: resolved.placeLabel ?? resolved.zone.name,
+      body: photoHasGps
+          ? 'Position lue dans la photo · ${resolved.zone.name}'
+          : 'Position confirmée · ${resolved.zone.name}',
+    );
+  }
+}
+
+class _BannerShell extends StatelessWidget {
+  const _BannerShell({
+    required this.color,
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  final Color color;
+  final IconData icon;
+  final String title;
+  final String? body;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.45), width: 1.2),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.karla(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+                if (body != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    body!,
+                    style: GoogleFonts.karla(
+                      fontSize: 11,
+                      color: textPrimary,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================
+// Sélecteur de rareté inline (photo-first)
+// =============================================================
+//
+// Affiché quand l'espèce sélectionnée n'a pas de ligne species_zones pour la
+// zone détectée. Remplace l'ancien _PickRarityForZoneDialog qui surgissait au
+// submit. À l'enregistrement de l'obs, on insère la ligne manquante avec la
+// valeur choisie.
+
+class _RarityPickerInline extends StatelessWidget {
+  const _RarityPickerInline({
+    required this.zoneName,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String zoneName;
+  final Rarity? selected;
+  final ValueChanged<Rarity> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: gold.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: gold.withValues(alpha: 0.55), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.help_outline, size: 16, color: gold),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Cette espèce n\'est pas encore curée en $zoneName.',
+                  style: GoogleFonts.karla(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Choisis sa rareté locale — on l\'ajoutera au catalogue de la zone.',
+            style: GoogleFonts.karla(
+              fontSize: 11,
+              color: textSecondary,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final r in Rarity.values)
+                _RarityPickerChip(
+                  rarity: r,
+                  selected: selected == r,
+                  onTap: () => onSelected(r),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RarityPickerChip extends StatelessWidget {
+  const _RarityPickerChip({
+    required this.rarity,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Rarity rarity;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (rarity) {
+      Rarity.common => rarityCommon,
+      Rarity.rare => rarityRare,
+      Rarity.epic => rarityEpic,
+      Rarity.legendary => rarityLegendary,
+    };
+    final label = switch (rarity) {
+      Rarity.common => 'Commun',
+      Rarity.rare => 'Rare',
+      Rarity.epic => 'Épique',
+      Rarity.legendary => 'Légendaire',
+    };
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? color : surfaceCard,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? color : color.withValues(alpha: 0.4),
+            width: 1.4,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: selected ? surfaceBase : color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: GoogleFonts.karla(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: selected ? surfaceBase : color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================
+// Résolution territoriale (photo-first) — sealed types
+// =============================================================
+//
+// Représente l'état de la résolution de zone depuis la paire (lat, lng) :
+//   - resolving : appel reverse-geocode + lookup zone en cours
+//   - resolved  : zone curée trouvée (+ libellé "Forêt de Compiègne, Oise")
+//   - error     : hors France / hors zone curée / geocoding raté
+
+sealed class _ZoneResolution {
+  const _ZoneResolution();
+}
+
+class _ZoneResolving extends _ZoneResolution {
+  const _ZoneResolving();
+}
+
+class _ZoneResolved extends _ZoneResolution {
+  const _ZoneResolved({required this.zone, this.placeLabel});
+
+  final Zone zone;
+  final String? placeLabel;
+}
+
+class _ZoneError extends _ZoneResolution {
+  const _ZoneError(this.message);
+
+  final String message;
 }
