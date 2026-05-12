@@ -261,7 +261,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       // côté pigeon, cast direct OK car les clés sont des Strings.
       feature.cast<String?, Object?>(),
     );
-    final zoom = (ext.value as num?)?.toDouble();
+    // FeatureExtensionValue.value est typé String? côté Mapbox — la lib
+    // JSON-encode le retour des extensions. On parse en double.
+    final zoom = double.tryParse(ext.value ?? '');
     final coords = ((feature['geometry'] as Map?)?['coordinates'] as List?)
         ?.cast<num>();
     if (zoom == null || coords == null || coords.length < 2) return;
