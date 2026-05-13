@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
-import '../../../core/utils/env.dart';
 import '../../../shared/models/zone.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/data/gamification_state_provider.dart';
@@ -14,13 +13,11 @@ import '../../gamification/presentation/badge_unlock_overlay.dart';
 import '../../gamification/presentation/daily_quests_section.dart';
 import '../data/territory_progress_provider.dart';
 
-/// Config d'affichage par zone — donne le centre de la mini-carte statique,
-/// le tag ("DOMICILE" / "VOISIN") et la couleur de tag. Garder en local
-/// tant que ces métadonnées ne sont pas en BDD ; à terme on les passe sur
-/// la table zones (ex: home_center_lat, home_center_lng, display_tag).
-const _zoneDisplay = <String, ({double lat, double lng, String tag, Color tagColor})>{
-  '60': (lat: 49.41, lng: 2.82, tag: 'DOMICILE', tagColor: forestGreen),
-  '02': (lat: 49.45, lng: 3.62, tag: 'VOISIN',   tagColor: terracotta),
+/// Config d'affichage par zone — donne le tag ("DOMICILE" / "VOISIN") et la
+/// couleur de tag. À terme à passer sur la table zones (ex: `display_tag`).
+const _zoneDisplay = <String, ({String tag, Color tagColor})>{
+  '60': (tag: 'DOMICILE', tagColor: gold),
+  '02': (tag: 'VOISIN',   tagColor: terracotta),
 };
 
 class HomeScreen extends ConsumerWidget {
@@ -528,6 +525,11 @@ class _SectionLabel extends StatelessWidget {
 // _TerritoriesList — itère depuis allZonesProvider (vs hard-codé)
 // =============================================================
 
+// _TerritoriesList — hero pour le 1er (DOMICILE), liste compacte pour le reste.
+// Plus de mini-cartes statiques Mapbox (charge inutile + zero info actionnable).
+// La pastille polymorphe (numéro département FR pour l'instant) pourra à
+// terme afficher un drapeau pour les zones étrangères.
+
 class _TerritoriesList extends ConsumerWidget {
   const _TerritoriesList({required this.zonesAsync});
 
@@ -537,7 +539,7 @@ class _TerritoriesList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return zonesAsync.when(
       loading: () => const SizedBox(
-        height: 80,
+        height: 100,
         child: Center(
           child: SizedBox(
             width: 20,
@@ -553,72 +555,159 @@ class _TerritoriesList extends ConsumerWidget {
           style: GoogleFonts.karla(color: textMuted),
         ),
       ),
-      data: (zones) => Column(
-        children: [
-          for (var i = 0; i < zones.length; i++) ...[
-            if (i > 0) const SizedBox(height: 12),
-            _TerritoryCard(
-              zone: zones[i],
-              progressAsync: ref.watch(zoneProgressProvider(zones[i].shortCode ?? '')),
+      data: (zones) {
+        if (zones.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: [
+            _TerritoryHero(
+              zone: zones.first,
+              progressAsync: ref.watch(
+                zoneProgressProvider(zones.first.shortCode ?? ''),
+              ),
             ),
+            for (var i = 1; i < zones.length; i++) ...[
+              const SizedBox(height: 8),
+              _TerritoryRowCompact(
+                zone: zones[i],
+                progressAsync: ref.watch(
+                  zoneProgressProvider(zones[i].shortCode ?? ''),
+                ),
+              ),
+            ],
           ],
-        ],
+        );
+      },
+    );
+  }
+}
+
+/// Pastille forestGreen + numéro doré. Future-proof : on pourra brancher un
+/// drapeau (📍🇨🇷) ou une icône custom selon le type de zone.
+class _TerritoryBadge extends StatelessWidget {
+  const _TerritoryBadge({required this.code, this.size = 36});
+
+  final String code;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLong = code.length >= 3;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [forestGreen, forestGreenLight],
+        ),
+        borderRadius: BorderRadius.circular(size * 0.25),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        code,
+        style: GoogleFonts.cormorantGaramond(
+          fontSize: isLong ? size * 0.36 : size * 0.46,
+          fontWeight: FontWeight.bold,
+          color: goldLight,
+          letterSpacing: -0.5,
+        ),
       ),
     );
   }
 }
 
-class _TerritoryCard extends StatelessWidget {
-  const _TerritoryCard({required this.zone, required this.progressAsync});
+class _TagPill extends StatelessWidget {
+  const _TagPill({required this.tag, required this.color, this.size = 9});
+
+  final String tag;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        tag,
+        style: GoogleFonts.karla(
+          fontSize: size,
+          letterSpacing: 1.5,
+          fontWeight: FontWeight.bold,
+          color: forestGreen,
+        ),
+      ),
+    );
+  }
+}
+
+/// Hero card pour le terrain principal (DOMICILE) — gradient forestGreen,
+/// pastille XL, nom en Cormorant, barre de progression dorée + pourcentage.
+class _TerritoryHero extends StatelessWidget {
+  const _TerritoryHero({required this.zone, required this.progressAsync});
 
   final Zone zone;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    // Récupère la config d'affichage (centre + tag). Fallback si zone inconnue
-    // (ex: nouvelle zone ajoutée en BDD avant qu'on définisse sa config) :
-    // centre arbitraire France + tag "AUTRE".
     final display = _zoneDisplay[zone.shortCode] ??
-        (lat: 46.5, lng: 2.5, tag: 'AUTRE', tagColor: textSecondary);
+        (tag: 'AUTRE', tagColor: textSecondary);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: surfaceCard,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: forestGreen, width: 2),
-          boxShadow: [
-            BoxShadow(
-              color: forestGreen.withValues(alpha: 0.2),
-              blurRadius: 20,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => context.go('/territory/${zone.id}'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _TerritoryMap(
-                    centerLat: display.lat,
-                    centerLng: display.lng,
-                    badge: display.tag,
-                    badgeColor: display.tagColor,
-                  ),
-                  Container(height: 2, color: const Color(0xFFE8E0CE)),
-                  _TerritoryInfo(
-                    displayName: zone.name,
-                    shortCode: zone.shortCode ?? '',
-                    progressAsync: progressAsync,
-                  ),
-                ],
+          onTap: () => context.go('/territory/${zone.id}'),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [forestGreen, forestGreenLight, forestGreen],
               ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: forestGreen.withValues(alpha: 0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _TerritoryBadge(
+                      code: zone.shortCode ?? '?',
+                      size: 56,
+                    ),
+                    const Spacer(),
+                    _TagPill(tag: display.tag, color: display.tagColor),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  zone.name,
+                  style: GoogleFonts.cormorantGaramond(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w600,
+                    color: surfaceBase,
+                    height: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _TerritoryHeroProgress(progressAsync: progressAsync),
+              ],
             ),
           ),
         ),
@@ -627,67 +716,71 @@ class _TerritoryCard extends StatelessWidget {
   }
 }
 
-class _TerritoryMap extends StatelessWidget {
-  const _TerritoryMap({
-    required this.centerLat,
-    required this.centerLng,
-    required this.badge,
-    required this.badgeColor,
-  });
+class _TerritoryHeroProgress extends StatelessWidget {
+  const _TerritoryHeroProgress({required this.progressAsync});
 
-  final double centerLat;
-  final double centerLng;
-  final String badge;
-  final Color badgeColor;
-
-  static const _zoom = 8;
-
-  String get _staticUrl =>
-      'https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/'
-      '$centerLng,$centerLat,$_zoom/600x320@2x'
-      '?access_token=${Env.mapboxAccessToken}';
+  final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 160,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.network(
-            _staticUrl,
-            fit: BoxFit.cover,
-            loadingBuilder: (_, child, progress) {
-              if (progress == null) return child;
-              return const _MapFallback();
-            },
-            errorBuilder: (_, _, _) => const _MapFallback(),
+    return progressAsync.when(
+      loading: () => const SizedBox(
+        height: 22,
+        child: Center(
+          child: SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2, color: goldLight),
           ),
-          Positioned(
-            top: 12,
-            right: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: badgeColor,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF000000).withValues(alpha: 0.15),
-                    blurRadius: 4,
-                  ),
-                ],
-              ),
-              child: Text(
-                badge,
+        ),
+      ),
+      error: (_, _) => Text(
+        'Progression indisponible',
+        style: GoogleFonts.karla(color: surfaceBase, fontSize: 12),
+      ),
+      data: (p) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: p.fraction,
+              minHeight: 6,
+              backgroundColor: surfaceBase.withValues(alpha: 0.18),
+              valueColor: const AlwaysStoppedAnimation<Color>(goldLight),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                '${p.observed} espèces vues',
                 style: GoogleFonts.karla(
-                  fontSize: 10,
-                  letterSpacing: 1.5,
+                  fontSize: 13,
                   fontWeight: FontWeight.bold,
                   color: surfaceBase,
                 ),
               ),
-            ),
+              const SizedBox(width: 6),
+              Text(
+                'sur ${p.total}',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  color: const Color(0xFFC4A572),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${(p.fraction * 100).round()}%',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: goldLight,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -695,153 +788,148 @@ class _TerritoryMap extends StatelessWidget {
   }
 }
 
-class _MapFallback extends StatelessWidget {
-  const _MapFallback();
+/// Ligne compacte pour les terrains secondaires (VOISIN, VOYAGE…).
+/// ~64 px de haut, tient à 10+ territoires sans scroll.
+class _TerritoryRowCompact extends StatelessWidget {
+  const _TerritoryRowCompact({required this.zone, required this.progressAsync});
+
+  final Zone zone;
+  final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFEFE7D2), Color(0xFFD8CFAE)],
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          Icons.terrain,
-          size: 56,
-          color: forestGreen.withValues(alpha: 0.3),
+    final display = _zoneDisplay[zone.shortCode] ??
+        (tag: 'AUTRE', tagColor: textSecondary);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => context.go('/territory/${zone.id}'),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: surfaceCard,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE8E0CE), width: 1.2),
+            ),
+            child: Row(
+              children: [
+                _TerritoryBadge(code: zone.shortCode ?? '?', size: 40),
+                const SizedBox(width: 12),
+                Expanded(child: _TerritoryRowInfo(
+                  name: zone.name,
+                  tag: display.tag,
+                  tagColor: display.tagColor,
+                  progressAsync: progressAsync,
+                )),
+                const Icon(Icons.chevron_right, size: 18, color: forestGreen),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _TerritoryInfo extends StatelessWidget {
-  const _TerritoryInfo({
-    required this.displayName,
-    required this.shortCode,
+class _TerritoryRowInfo extends StatelessWidget {
+  const _TerritoryRowInfo({
+    required this.name,
+    required this.tag,
+    required this.tagColor,
     required this.progressAsync,
   });
 
-  final String displayName;
-  final String shortCode;
+  final String name;
+  final String tag;
+  final Color tagColor;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: progressAsync.when(
-        loading: () => const _TerritoryInfoSkeleton(),
-        error: (e, _) => Text(
-          'Progression indisponible',
-          style: GoogleFonts.karla(color: textMuted, fontSize: 13),
-        ),
-        data: (p) => Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    return progressAsync.when(
+      loading: () => SizedBox(
+        height: 32,
+        child: Row(
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: RichText(
-                    text: TextSpan(
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w500,
-                        color: forestGreen,
-                      ),
-                      children: [
-                        TextSpan(text: '$displayName '),
-                        TextSpan(
-                          text: '($shortCode)',
-                          style: GoogleFonts.cormorantGaramond(
-                            fontSize: 16,
-                            fontStyle: FontStyle.italic,
-                            color: terracotta,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const Icon(
-                  Icons.chevron_right,
-                  color: forestGreen,
-                  size: 24,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Text(
-                  '${p.observed}',
-                  style: GoogleFonts.karla(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: forestGreen,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: p.fraction,
-                      minHeight: 8,
-                      backgroundColor: forestGreen.withValues(alpha: 0.15),
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(terracotta),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${p.total}',
-                  style: GoogleFonts.karla(
-                    fontSize: 13,
-                    color: textSecondary,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
             Text(
-              p.remaining > 0
-                  ? '${p.remaining} espèces encore à découvrir'
-                  : 'Toutes les espèces de $displayName observées !',
-              style: GoogleFonts.karla(
-                fontSize: 11,
-                fontStyle: FontStyle.italic,
-                color: textSecondary,
+              name,
+              style: GoogleFonts.cormorantGaramond(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: forestGreen,
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _TerritoryInfoSkeleton extends StatelessWidget {
-  const _TerritoryInfoSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 60,
-      child: Center(
-        child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: forestGreen.withValues(alpha: 0.4),
-          ),
+      error: (_, _) => Text(
+        name,
+        style: GoogleFonts.cormorantGaramond(
+          fontSize: 17,
+          fontWeight: FontWeight.w600,
+          color: forestGreen,
         ),
+      ),
+      data: (p) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Flexible(
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.cormorantGaramond(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: forestGreen,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              _TagPill(tag: tag, color: tagColor, size: 8),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Text(
+                '${p.observed}',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: forestGreen,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: p.fraction,
+                    minHeight: 4,
+                    backgroundColor: forestGreen.withValues(alpha: 0.15),
+                    valueColor:
+                        const AlwaysStoppedAnimation<Color>(terracotta),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '${p.total}',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
