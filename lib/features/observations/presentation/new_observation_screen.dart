@@ -378,32 +378,36 @@ class _NewObservationScreenState
 
   Future<void> _acceptCandidate(SpeciesCandidate candidate) async {
     if (candidate.scientificName.isEmpty) return;
-    // Recherche du doublon dans la zone détectée. Si pas de zone détectée
-    // (user pas encore positionné), on retombe sur Oise pour la recherche
-    // — l'user devra de toute façon corriger la position, le dialog d'ajout
-    // ne pré-cochera aucun territoire pour qu'il fasse un choix explicite.
-    final detectedZone = _detectedZone;
-    final searchZoneId = detectedZone?.id ??
-        (await ref.read(oiseZoneProvider.future)).id;
-    final allSpecies = await ref.read(_zoneSpeciesProvider(searchZoneId).future);
-    final scientificLower = candidate.scientificName.toLowerCase();
-    final match = allSpecies.cast<({Species species, Rarity rarity})?>().firstWhere(
-          (s) =>
-              s!.species.scientificName.toLowerCase() == scientificLower,
-          orElse: () => null,
-        );
+    // Recherche GLOBALE par nom scientifique (toutes zones confondues).
+    // L'ancienne version cherchait dans _zoneSpeciesProvider(zone), ce qui
+    // ratait deux cas :
+    //   1. Espèce créée avec une zone différente (pas liée à la zone courante).
+    //   2. Cache _zoneSpeciesProvider pas encore refresh après un ajout récent.
+    // En interrogeant directement species, on est insensible à species_zones :
+    // si l'espèce existe sous ce nom scientifique, on la réutilise. Le flow
+    // photo-first gère ensuite l'éventuelle absence de species_zones pour la
+    // zone courante via le sélecteur de rareté inline.
+    final searchName = candidate.scientificName.trim();
+    final row = await ref
+        .read(supabaseClientProvider)
+        .from('species')
+        .select('id')
+        .ilike('scientific_name', searchName)
+        .limit(1)
+        .maybeSingle();
     if (!mounted) return;
+    final existingId = row?['id'] as String?;
 
-    if (match != null) {
-      setState(() => _selectedSpeciesId = match.species.id);
+    if (existingId != null) {
+      setState(() => _selectedSpeciesId = existingId);
       unawaited(_resolveSpeciesRarity());
     } else {
-      // Espèce non curée → dialog d'ajout in-place.
+      // Espèce vraiment nouvelle (pas en BDD) → dialog d'ajout in-place.
       final newId = await showDialog<String>(
         context: context,
         builder: (_) => _AddSpeciesDialog(
           candidate: candidate,
-          initialZoneId: detectedZone?.id,
+          initialZoneId: _detectedZone?.id,
         ),
       );
       if (newId != null && mounted) {
