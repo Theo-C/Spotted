@@ -11,9 +11,14 @@
 
     <!-- Notifications locales (rappel quotidien série).
          POST_NOTIFICATIONS = obligatoire à partir d'Android 13 (API 33).
-         RECEIVE_BOOT_COMPLETED = re-déclencher les schedules après reboot. -->
+         RECEIVE_BOOT_COMPLETED = re-déclencher les schedules après reboot.
+         SCHEDULE_EXACT_ALARM = nécessaire pour des notifs à l'heure pile
+           (Android 12+). Sans cette permission accordée par l'user,
+           l'API throw exact_alarms_not_permitted ; on fallback alors sur
+           inexactAllowWhileIdle (peut être retardé en doze mode). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:label="spotted"

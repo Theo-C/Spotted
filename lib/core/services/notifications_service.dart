@@ -68,10 +68,25 @@ class NotificationsService {
     final status = await Permission.notification.request();
     if (!status.isGranted) return false;
 
+    // Sur Android 12+, SCHEDULE_EXACT_ALARM est une permission spéciale
+    // que l'user doit accorder via les paramètres système (pas auto-granted).
+    // On la demande poliment : si refusée, on fallback sur inexactAllowWhileIdle
+    // qui marche sans permission spéciale mais peut être retardée en doze mode.
+    await Permission.scheduleExactAlarm.request();
+
     await _scheduleDaily();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kEnabled, true);
     return true;
+  }
+
+  /// Détermine si on peut utiliser exactAllowWhileIdle (heure pile garantie)
+  /// ou si on doit retomber sur inexactAllowWhileIdle (peut être retardé).
+  Future<AndroidScheduleMode> _bestScheduleMode() async {
+    final s = await Permission.scheduleExactAlarm.status;
+    return s.isGranted
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
   }
 
   /// Désactive le rappel : annule la notif planifiée + persiste l'état.
@@ -99,6 +114,7 @@ class NotificationsService {
       scheduled = scheduled.add(const Duration(days: 1));
     }
 
+    final mode = await _bestScheduleMode();
     await _plugin.zonedSchedule(
       _streakNotifId,
       "Ne perds pas ta série !",
@@ -114,7 +130,7 @@ class NotificationsService {
         ),
         iOS: DarwinNotificationDetails(),
       ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      androidScheduleMode: mode,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
@@ -129,21 +145,26 @@ class NotificationsService {
     }
   }
 
-  /// Programme une notif "test" dans ~10 secondes pour vérifier que le canal
-  /// fonctionne (permissions, timezone, channel ID, etc.). Utile depuis le
-  /// bouton "Tester" dans Profil > Réglages.
-  /// Utilise un ID différent du rappel quotidien pour ne pas écraser celui-ci.
+  /// Affiche une notif "test" immédiatement (pas de scheduling) pour vérifier
+  /// que le canal et la permission POST_NOTIFICATIONS fonctionnent. Utile
+  /// depuis le bouton "Tester" dans Profil > Réglages.
+  ///
+  /// On utilise [show] et pas [zonedSchedule] pour 2 raisons :
+  ///   1. Pas besoin de la permission spéciale SCHEDULE_EXACT_ALARM (sinon
+  ///      l'API throw exact_alarms_not_permitted sur Android 12+ si l'user
+  ///      n'a pas accordé manuellement).
+  ///   2. Test instantané, pas d'attente de 10s qui pourrait être retardée
+  ///      en doze mode.
+  ///
+  /// ID dédié (_streakNotifId + 1) pour ne pas écraser le rappel quotidien.
   Future<bool> scheduleTestNotification() async {
     await _ensureInitialized();
     final status = await Permission.notification.request();
     if (!status.isGranted) return false;
-    final fireAt =
-        tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
-    await _plugin.zonedSchedule(
+    await _plugin.show(
       _streakNotifId + 1,
       'Test Spotted 🔥',
       "Si tu vois cette notif, le canal fonctionne. La vraie arrivera à 13h.",
-      fireAt,
       const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,
@@ -154,9 +175,6 @@ class NotificationsService {
         ),
         iOS: DarwinNotificationDetails(),
       ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
     return true;
   }
