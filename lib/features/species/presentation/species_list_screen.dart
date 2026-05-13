@@ -509,29 +509,11 @@ class _SpeciesCard extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          color.withValues(alpha: 0.15),
-                          color.withValues(alpha: 0.35),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Center(
-                      child: Text(
-                        emojiForCategory(categoryIconKey),
-                        style: TextStyle(
-                          fontSize: 26,
-                          color: observed ? null : color.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ),
+                  _SpeciesThumbnail(
+                    photoUrl: species.photoUrl as String?,
+                    categoryIconKey: categoryIconKey,
+                    rarityColor: color,
+                    observed: observed,
                   ),
                   if (observed)
                     Positioned(
@@ -604,6 +586,68 @@ class _SpeciesCard extends StatelessWidget {
       Rarity.epic => rarityEpic,
       Rarity.legendary => rarityLegendary,
     };
+  }
+}
+
+/// Vignette 56×56 d'une espèce. Pour les espèces observées on essaie d'abord
+/// la photo de la fiche ; sinon fallback emoji de catégorie. Pour les
+/// non-observées (mode "mystère") on garde toujours l'emoji pour préserver
+/// la surprise — on ne révèle pas à quoi l'animal ressemble avant de l'avoir vu.
+class _SpeciesThumbnail extends StatelessWidget {
+  const _SpeciesThumbnail({
+    required this.photoUrl,
+    required this.categoryIconKey,
+    required this.rarityColor,
+    required this.observed,
+  });
+
+  final String? photoUrl;
+  final String categoryIconKey;
+  final Color rarityColor;
+  final bool observed;
+
+  @override
+  Widget build(BuildContext context) {
+    final emojiFallback = Center(
+      child: Text(
+        emojiForCategory(categoryIconKey),
+        style: TextStyle(
+          fontSize: 26,
+          color: observed ? null : rarityColor.withValues(alpha: 0.6),
+        ),
+      ),
+    );
+
+    final showPhoto = observed && photoUrl != null && photoUrl!.isNotEmpty;
+
+    return Container(
+      width: 56,
+      height: 56,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            rarityColor.withValues(alpha: 0.15),
+            rarityColor.withValues(alpha: 0.35),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: showPhoto
+          ? Image.network(
+              photoUrl!,
+              fit: BoxFit.cover,
+              // Pendant le chargement on garde l'emoji visible — évite le
+              // "flash blanc" sur connexions lentes.
+              loadingBuilder: (_, child, progress) =>
+                  progress == null ? child : emojiFallback,
+              // Photo cassée / 404 / hors réseau → emoji.
+              errorBuilder: (_, _, _) => emojiFallback,
+            )
+          : emojiFallback,
+    );
   }
 }
 
