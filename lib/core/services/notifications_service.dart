@@ -27,6 +27,13 @@ class NotificationsService {
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
     tz_data.initializeTimeZones();
+    // Force la timezone locale à Europe/Paris. Sans ça, `tz.local` reste UTC
+    // par défaut → "13:00 local" devient "13:00 UTC" → 14:00 en France l'hiver
+    // (CET) ou 15:00 en été (CEST). Bug rapporté 2026-05-13 : user n'a rien
+    // reçu à 13h pile parce que la notif fire en réalité à 14h/15h.
+    // MVP France-only : hardcoded acceptable. Multi-TZ → utiliser
+    // flutter_timezone pour détecter dynamiquement.
+    tz.setLocalLocation(tz.getLocation('Europe/Paris'));
     const init = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(),
@@ -120,6 +127,38 @@ class NotificationsService {
     if (await isEnabled()) {
       await _scheduleDaily();
     }
+  }
+
+  /// Programme une notif "test" dans ~10 secondes pour vérifier que le canal
+  /// fonctionne (permissions, timezone, channel ID, etc.). Utile depuis le
+  /// bouton "Tester" dans Profil > Réglages.
+  /// Utilise un ID différent du rappel quotidien pour ne pas écraser celui-ci.
+  Future<bool> scheduleTestNotification() async {
+    await _ensureInitialized();
+    final status = await Permission.notification.request();
+    if (!status.isGranted) return false;
+    final fireAt =
+        tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+    await _plugin.zonedSchedule(
+      _streakNotifId + 1,
+      'Test Spotted 🔥',
+      "Si tu vois cette notif, le canal fonctionne. La vraie arrivera à 13h.",
+      fireAt,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          'Rappel série',
+          channelDescription: 'Rappel quotidien pour entretenir la série',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+    return true;
   }
 }
 
