@@ -7,28 +7,42 @@ class Streak {
     required this.longest,
     required this.isActiveToday,
     required this.isInGrace,
+    this.isPaused = false,
     this.lastObservationDate,
   });
 
-  /// Nombre de jours consécutifs en cours (peut être 0).
+  /// Nombre de jours consécutifs en cours.
+  /// - 0 si aucune obs OU série vraiment perdue (gap > 2 jours).
+  /// - Sinon = longueur de la chaîne, y compris si elle est `isPaused`
+  ///   (chaîne préservée pour l'affichage en attendant l'obs du jour).
   final int current;
 
   /// Record historique de l'user (>= current).
   final int longest;
 
-  /// True si l'user a observé aujourd'hui (la série est "validée" pour le jour).
+  /// True si l'user a observé aujourd'hui.
   final bool isActiveToday;
 
-  /// True si l'user a 1 jour de grâce avant de perdre sa série (a observé hier
-  /// mais pas aujourd'hui). UI : flamme orange/clignotante pour signaler l'urgence.
+  /// True si l'user a observé hier mais pas aujourd'hui : 1 jour de grâce
+  /// avant de perdre sa série (sa série compte encore comme active pour
+  /// le multiplicateur). UI : flamme orange.
   final bool isInGrace;
+
+  /// True si la dernière obs est avant-hier (gap de 2 jours, dernière chance
+  /// de rattraper avant rupture définitive). La chaîne est préservée dans
+  /// [current] pour rester visible, mais le multiplicateur XP est désactivé
+  /// (1 jour de grâce uniquement, pas 2). UI : flamme bleue.
+  final bool isPaused;
 
   /// Date de la dernière observation. Null si l'user n'a jamais observé.
   final DateTime? lastObservationDate;
 
-  /// Multiplicateur XP appliqué aux nouvelles obs selon le palier de série courant.
-  /// 1.0 = pas de bonus, 1.5 = +50%.
+  /// Multiplicateur XP appliqué aux nouvelles obs selon le palier de série
+  /// courant. 1.0 = pas de bonus, 1.5 = +50%.
+  /// Pendant une pause, on retombe à 1.0 — la règle est "1 jour de grâce",
+  /// pas 2. L'user doit obs aujourd'hui pour réactiver le multiplicateur.
   double get xpMultiplier {
+    if (isPaused) return 1.0;
     if (current >= 100) return 1.5;
     if (current >= 30) return 1.25;
     if (current >= 7) return 1.1;
@@ -60,17 +74,21 @@ class Streak {
 
 /// Calcule la série à partir des dates d'observation d'un user.
 ///
-/// Règle : 1 jour de grâce.
-///   - Aujourd'hui (J) : observé → série +1, "active"
-///   - J n'observe pas, J-1 a observé → série maintenue, état "in grace"
-///   - J et J-1 : pas d'obs → série reset à 0
+/// Règle : 1 jour de grâce, avec un état "pause" intermédiaire.
+///   - J (aujourd'hui) : obs → active, current = chaîne
+///   - J−1 : seule la veille a observé → grâce, current = chaîne, mult conservé
+///   - J−2 : avant-hier mais pas hier ni aujourd'hui → PAUSE, current = chaîne
+///           (préservée pour rester visible) mais multiplicateur reset à 1.0.
+///           Une obs aujourd'hui rattrape la série (le gap de 2 est toléré
+///           dans le comptage interne).
+///   - > J−2 : série vraiment rompue, current = 0.
 ///
 /// Algorithme :
-///   1. Trier obs par date desc, garder uniquement la date (jour) sans l'heure
-///   2. Dédupliquer (un user peut faire plusieurs obs le même jour)
-///   3. Parcourir depuis la plus récente, compter les jours consécutifs
-///      avec tolérance de 1 jour entre obs (= règle de grâce)
-///   4. Stopper dès qu'un gap > 1 jour apparaît
+///   1. Trier obs par date desc, garder uniquement la date (jour) sans heure
+///   2. Dédupliquer (plusieurs obs le même jour = 1 jour dans la chaîne)
+///   3. Si gap entre aujourd'hui et la dernière obs > 2 → série brisée (0)
+///   4. Sinon compter les jours en chaîne avec tolérance gap ≤ 2 (1 jour
+///      sauté autorisé entre deux obs voisines)
 Streak computeStreak(List<Observation> observations, {DateTime? now}) {
   if (observations.isEmpty) return Streak.empty;
 
@@ -84,27 +102,26 @@ Streak computeStreak(List<Observation> observations, {DateTime? now}) {
     ..sort((a, b) => b.compareTo(a));
 
   final lastObsDate = obsDays.first;
-
-  // Distance en jours entre aujourd'hui et la dernière obs
   final daysSinceLastObs = today.difference(lastObsDate).inDays;
 
-  // Si > 1 jour de gap entre aujourd'hui et la dernière obs : série rompue
-  if (daysSinceLastObs > 1) {
+  // Gap > 2 jours = série vraiment perdue (irrattrapable par une obs
+  // aujourd'hui, vu que la règle de chaîne tolère gap ≤ 2).
+  if (daysSinceLastObs > 2) {
     return Streak(
       current: 0,
       longest: _computeLongestEver(obsDays),
       isActiveToday: false,
       isInGrace: false,
+      isPaused: false,
       lastObservationDate: lastObsDate,
     );
   }
 
-  // Compte les jours consécutifs depuis la plus récente avec tolérance 1j
+  // Compte les jours en chaîne. Tolérance gap ≤ 2 (1 jour sauté autorisé).
   var current = 1;
   for (var i = 1; i < obsDays.length; i++) {
     final gap = obsDays[i - 1].difference(obsDays[i]).inDays;
     if (gap <= 2) {
-      // gap == 1 → jours consécutifs, gap == 2 → un jour sauté toléré
       current++;
     } else {
       break;
@@ -116,6 +133,7 @@ Streak computeStreak(List<Observation> observations, {DateTime? now}) {
     longest: _computeLongestEver(obsDays).clamp(current, 1 << 30),
     isActiveToday: daysSinceLastObs == 0,
     isInGrace: daysSinceLastObs == 1,
+    isPaused: daysSinceLastObs == 2,
     lastObservationDate: lastObsDate,
   );
 }

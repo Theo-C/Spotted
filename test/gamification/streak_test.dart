@@ -44,10 +44,26 @@ void main() {
       expect(s.isInGrace, true);
     });
 
-    test('1 obs avant-hier → série rompue (gap 2 jours = trop)', () {
+    test('1 obs avant-hier → série en pause (rattrapable aujourd\'hui)', () {
+      // J-2 : la série n'est pas encore perdue, l'user peut la rattraper en
+      // observant aujourd'hui (gap 2 toléré dans le comptage interne).
       final s = computeStreak([_obsAt(daysAgo(2))], now: today);
-      expect(s.current, 0);
+      expect(s.current, 1);
+      expect(s.isPaused, true);
       expect(s.isInGrace, false);
+      expect(s.isActiveToday, false);
+      // Multiplicateur reset à 1.0 pendant la pause (1 jour de grâce strict,
+      // pas 2) — l'user doit obs aujourd'hui pour le récupérer.
+      expect(s.xpMultiplier, 1.0);
+    });
+
+    test('1 obs il y a 3 jours → série vraiment rompue (gap 3 = trop)', () {
+      // J-3 : plus rattrapable, le gap dépasse la tolérance de chaîne.
+      final s = computeStreak([_obsAt(daysAgo(3))], now: today);
+      expect(s.current, 0);
+      expect(s.isPaused, false);
+      expect(s.isInGrace, false);
+      expect(s.isActiveToday, false);
     });
   });
 

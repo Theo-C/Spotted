@@ -403,11 +403,19 @@ class _StreakBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final isActive = streak.isActiveToday;
     final isGrace = streak.isInGrace;
+    final isPaused = streak.isPaused;
+    // 4 états visuels :
+    //   - série brisée (current 0) : flamme grise muette
+    //   - en pause (avant-hier obs, rattrapable) : flamme bleue
+    //   - en grâce (hier obs, pas aujourd'hui) : flamme orange
+    //   - active (obs aujourd'hui) : flamme terracotta + pulse
     final flameColor = streak.current == 0
         ? textMuted
-        : isGrace
-            ? const Color(0xFFE08E2C)
-            : terracotta;
+        : isPaused
+            ? const Color(0xFF4A90B8)
+            : isGrace
+                ? const Color(0xFFE08E2C)
+                : terracotta;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
