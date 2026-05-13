@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -101,8 +105,36 @@ class _QuestRow extends ConsumerStatefulWidget {
   ConsumerState<_QuestRow> createState() => _QuestRowState();
 }
 
-class _QuestRowState extends ConsumerState<_QuestRow> {
+class _QuestRowState extends ConsumerState<_QuestRow>
+    with SingleTickerProviderStateMixin {
   bool _claiming = false;
+
+  /// Controller pour le pulse du bouton "Réclamer" au tap.
+  /// forward (1.0 → 0.92) → reverse (0.92 → 1.0), 200ms total.
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulse;
+
+  /// Clé sur le bouton pour récupérer sa position globale et y attacher
+  /// le flottant "+XP" via l'Overlay.
+  final GlobalKey _buttonKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+    );
+    _pulse = Tween<double>(begin: 1.0, end: 0.92).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -193,63 +225,120 @@ class _QuestRowState extends ConsumerState<_QuestRow> {
 
   Widget _trailing({required bool claimable, required bool claimed}) {
     if (claimed) {
-      return const Icon(Icons.check_circle, size: 22, color: forestGreen);
+      // Check qui apparaît avec scale-in + petit bounce quand le quest passe
+      // de claimable → claimed. flutter_animate déclenche sur build.
+      return const Icon(Icons.check_circle, size: 22, color: forestGreen)
+          .animate()
+          .scale(
+            begin: const Offset(0.4, 0.4),
+            end: const Offset(1, 1),
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.elasticOut,
+          )
+          .fadeIn(duration: const Duration(milliseconds: 120));
     }
     if (!claimable) {
       return const SizedBox(width: 22);
     }
-    return SizedBox(
-      height: 28,
-      child: ElevatedButton(
-        onPressed: _claiming ? null : _onClaim,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: forestGreen,
-          foregroundColor: surfaceBase,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+    return ScaleTransition(
+      scale: _pulse,
+      child: SizedBox(
+        key: _buttonKey,
+        height: 28,
+        child: ElevatedButton(
+          onPressed: _claiming ? null : _onClaim,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: forestGreen,
+            foregroundColor: surfaceBase,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            elevation: 0,
           ),
-          elevation: 0,
+          child: _claiming
+              ? const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: surfaceBase,
+                  ),
+                )
+              : Text(
+                  'RÉCLAMER',
+                  style: GoogleFonts.karla(
+                    fontSize: 10,
+                    letterSpacing: 1.2,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
         ),
-        child: _claiming
-            ? const SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: surfaceBase,
-                ),
-              )
-            : Text(
-                'RÉCLAMER',
-                style: GoogleFonts.karla(
-                  fontSize: 10,
-                  letterSpacing: 1.2,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
       ),
     );
   }
 
+  /// Insère un flottant "+XP" au-dessus du bouton, qui monte de ~36 px en
+  /// fadant. Le calcul de position se fait via la GlobalKey sur le bouton.
+  void _showFloatingXp(int xp) {
+    final overlayState = Overlay.maybeOf(context);
+    final box = _buttonKey.currentContext?.findRenderObject() as RenderBox?;
+    if (overlayState == null || box == null) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final entry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: pos.dx - 20,
+        top: pos.dy - 24,
+        child: IgnorePointer(
+          child: Material(
+            color: Colors.transparent,
+            child: Text(
+              '+$xp XP',
+              style: GoogleFonts.karla(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: gold,
+                shadows: const [
+                  Shadow(color: Color(0x55000000), blurRadius: 6),
+                ],
+              ),
+            ).animate()
+                .moveY(
+                  begin: 0,
+                  end: -36,
+                  duration: const Duration(milliseconds: 900),
+                  curve: Curves.easeOutCubic,
+                )
+                .fadeIn(duration: const Duration(milliseconds: 120))
+                .then(delay: const Duration(milliseconds: 500))
+                .fadeOut(duration: const Duration(milliseconds: 300)),
+          ),
+        ),
+      ),
+    );
+    overlayState.insert(entry);
+    Future<void>.delayed(const Duration(milliseconds: 1000), () {
+      if (entry.mounted) entry.remove();
+    });
+  }
+
   Future<void> _onClaim() async {
+    // Pulse + haptic dès le tap, avant l'aller-retour BDD pour un retour
+    // immédiat (vs attendre la réponse réseau pour réagir).
+    unawaited(HapticFeedback.lightImpact());
+    _pulseController.forward().then((_) => _pulseController.reverse());
     setState(() => _claiming = true);
+
+    final xp = widget.status.def.xpReward;
+    _showFloatingXp(xp);
+
     try {
       final claimer = ref.read(questClaimerProvider);
-      final xp = await claimer(widget.status.def);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: forestGreen,
-          content: Text(
-            '+$xp XP — ${widget.status.def.name} validée !',
-            style: GoogleFonts.karla(color: surfaceBase),
-          ),
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      await claimer(widget.status.def);
+      // Pas de snackbar : le flottant +XP + le check qui apparaît dans la
+      // row sont le feedback. Plus discret, plus rapide à enchaîner.
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
