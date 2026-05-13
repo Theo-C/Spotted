@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:confetti/confetti.dart';
 import 'package:flutter/foundation.dart' show Factory;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -2488,7 +2491,13 @@ class _SpeciesPickerSheetState extends ConsumerState<_SpeciesPickerSheet> {
       };
 }
 
-class _DiscoveryDialog extends StatelessWidget {
+/// Dialog de récompense après une observation enregistrée.
+/// Intensité graduée selon (rarity, isFirst) :
+///   - commun + re-obs       : fondu doux, pas de confetti, haptic léger
+///   - rare/épique 1ʳᵉ obs    : scale-in + compteur animé + confetti modéré
+///   - légendaire 1ʳᵉ obs     : tout ci-dessus + halo doré pulsant + pill
+///                             "LÉGENDAIRE" + haptic lourd + confetti dense
+class _DiscoveryDialog extends StatefulWidget {
   const _DiscoveryDialog({
     required this.rarity,
     required this.points,
@@ -2500,78 +2509,282 @@ class _DiscoveryDialog extends StatelessWidget {
   final bool isFirst;
 
   @override
+  State<_DiscoveryDialog> createState() => _DiscoveryDialogState();
+}
+
+class _DiscoveryDialogState extends State<_DiscoveryDialog>
+    with TickerProviderStateMixin {
+  late final AnimationController _entry;
+  late final Animation<double> _scale;
+  late final Animation<double> _pointsTween;
+  late final AnimationController _halo;
+  late final ConfettiController _confetti;
+
+  bool get _isLegendary => widget.rarity == Rarity.legendary;
+  bool get _isEpic => widget.rarity == Rarity.epic;
+  bool get _hasConfetti =>
+      widget.isFirst && widget.rarity != Rarity.common;
+
+  @override
+  void initState() {
+    super.initState();
+    // Entrée : scale + bounce. Durée plus longue pour le légendaire pour
+    // donner le temps au compteur de points d'aller plus loin.
+    _entry = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: _isLegendary ? 1400 : 1000),
+    );
+    _scale = CurvedAnimation(
+      parent: _entry,
+      curve: const Interval(0, 0.5, curve: Curves.elasticOut),
+    );
+    _pointsTween = CurvedAnimation(
+      parent: _entry,
+      curve: const Interval(0.3, 1, curve: Curves.easeOutCubic),
+    );
+    // Halo : pulse continu pendant 2s puis stable. Uniquement pour épique/légendaire.
+    _halo = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+    _confetti = ConfettiController(
+      duration: Duration(milliseconds: _isLegendary ? 2200 : 1400),
+    );
+
+    // Démarre l'animation après le 1er frame pour que la haptic soit synchro
+    // avec le scale-in.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _entry.forward();
+      _triggerHaptics();
+      if (_hasConfetti) _confetti.play();
+    });
+  }
+
+  Future<void> _triggerHaptics() async {
+    // Vibration adaptée à la rareté. Re-obs commun = juste un selectionClick.
+    if (!widget.isFirst || widget.rarity == Rarity.common) {
+      await HapticFeedback.selectionClick();
+      return;
+    }
+    if (_isLegendary) {
+      await HapticFeedback.heavyImpact();
+      await Future.delayed(const Duration(milliseconds: 80));
+      await HapticFeedback.heavyImpact();
+      await Future.delayed(const Duration(milliseconds: 80));
+      await HapticFeedback.heavyImpact();
+    } else if (_isEpic) {
+      await HapticFeedback.mediumImpact();
+      await Future.delayed(const Duration(milliseconds: 100));
+      await HapticFeedback.mediumImpact();
+    } else {
+      await HapticFeedback.mediumImpact();
+    }
+  }
+
+  @override
+  void dispose() {
+    _entry.dispose();
+    _halo.dispose();
+    _confetti.dispose();
+    super.dispose();
+  }
+
+  Color get _rarityColor => switch (widget.rarity) {
+        Rarity.common => rarityCommon,
+        Rarity.rare => rarityRare,
+        Rarity.epic => rarityEpic,
+        Rarity.legendary => rarityLegendary,
+      };
+
+  String get _rarityLabel => switch (widget.rarity) {
+        Rarity.common => 'COMMUN',
+        Rarity.rare => 'RARE',
+        Rarity.epic => 'ÉPIQUE',
+        Rarity.legendary => 'LÉGENDAIRE',
+      };
+
+  @override
   Widget build(BuildContext context) {
-    final color = switch (rarity) {
-      Rarity.common => rarityCommon,
-      Rarity.rare => rarityRare,
-      Rarity.epic => rarityEpic,
-      Rarity.legendary => rarityLegendary,
-    };
-    return Dialog(
-      backgroundColor: surfaceBase,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [color, color.withValues(alpha: 0.7)],
+    final color = _rarityColor;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // Le confetti rayonne du haut vers le bas, derrière la dialog.
+        if (_hasConfetti)
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConfettiWidget(
+              confettiController: _confetti,
+              blastDirection: math.pi / 2,
+              blastDirectionality: BlastDirectionality.explosive,
+              maxBlastForce: _isLegendary ? 28 : 18,
+              minBlastForce: _isLegendary ? 12 : 8,
+              emissionFrequency: _isLegendary ? 0.08 : 0.05,
+              numberOfParticles: _isLegendary ? 24 : 14,
+              gravity: 0.28,
+              colors: _isLegendary
+                  ? const [gold, goldLight, terracotta, forestGreen]
+                  : [color, color.withValues(alpha: 0.7), gold, terracotta],
+            ),
+          ),
+        Dialog(
+          backgroundColor: surfaceBase,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: AnimatedBuilder(
+            animation: _entry,
+            builder: (_, _) {
+              // Scale-in léger pour la card entière (subtil, pas de bounce ici).
+              final cardScale = 0.92 + 0.08 * _scale.value.clamp(0.0, 1.0);
+              return Transform.scale(
+                scale: cardScale,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Pastille rareté (premier obs seulement)
+                      if (widget.isFirst) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: color, width: 1.2),
+                          ),
+                          child: Text(
+                            _rarityLabel,
+                            style: GoogleFonts.karla(
+                              fontSize: 10,
+                              letterSpacing: 2,
+                              fontWeight: FontWeight.bold,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      // Icône + halo
+                      _HeroIcon(
+                        color: color,
+                        scale: _scale,
+                        halo: _halo,
+                        showHalo: _isEpic || _isLegendary,
+                        showSparkle: widget.isFirst,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        widget.isFirst ? 'Découverte !' : 'Marqueur ajouté',
+                        style: GoogleFonts.cormorantGaramond(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w600,
+                          fontStyle: FontStyle.italic,
+                          color: forestGreen,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Compteur de points qui s'incrémente de 0 → points
+                      AnimatedBuilder(
+                        animation: _pointsTween,
+                        builder: (_, _) {
+                          final current =
+                              (_pointsTween.value * widget.points).round();
+                          return Text(
+                            '+ $current points',
+                            style: GoogleFonts.cormorantGaramond(
+                              fontSize: 36,
+                              fontWeight: FontWeight.bold,
+                              color: gold,
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: forestGreen,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 12,
+                          ),
+                        ),
+                        child: Text(
+                          'CONTINUER',
+                          style: GoogleFonts.karla(
+                            letterSpacing: 1.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              child: const Icon(
-                Icons.auto_awesome,
-                size: 40,
-                color: surfaceBase,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              isFirst ? 'Découverte !' : 'Marqueur ajouté',
-              style: GoogleFonts.cormorantGaramond(
-                fontSize: 28,
-                fontWeight: FontWeight.w600,
-                fontStyle: FontStyle.italic,
-                color: forestGreen,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '+ $points points',
-              style: GoogleFonts.cormorantGaramond(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: gold,
-              ),
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              style: FilledButton.styleFrom(
-                backgroundColor: forestGreen,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 12,
-                ),
-              ),
-              child: Text(
-                'CONTINUER',
-                style: GoogleFonts.karla(
-                  letterSpacing: 1.5,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
+              );
+            },
+          ),
         ),
-      ),
+      ],
+    );
+  }
+}
+
+/// Cercle gradient + icône ✨, avec halo pulsant en option pour les raretés
+/// hautes. Le scale grossit avec une courbe elasticOut au mount.
+class _HeroIcon extends StatelessWidget {
+  const _HeroIcon({
+    required this.color,
+    required this.scale,
+    required this.halo,
+    required this.showHalo,
+    required this.showSparkle,
+  });
+
+  final Color color;
+  final Animation<double> scale;
+  final Animation<double> halo;
+  final bool showHalo;
+  final bool showSparkle;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([scale, halo]),
+      builder: (_, _) {
+        final s = scale.value;
+        final haloAlpha = showHalo ? 0.35 + 0.35 * halo.value : 0.0;
+        final haloBlur = showHalo ? 18 + halo.value * 14 : 0.0;
+        return Transform.scale(
+          scale: 0.4 + 0.6 * s.clamp(0.0, 1.0),
+          child: Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [color, color.withValues(alpha: 0.75)],
+              ),
+              boxShadow: showHalo
+                  ? [
+                      BoxShadow(
+                        color: color.withValues(alpha: haloAlpha),
+                        blurRadius: haloBlur,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(
+              showSparkle ? Icons.auto_awesome : Icons.check,
+              size: 44,
+              color: surfaceBase,
+            ),
+          ),
+        );
+      },
     );
   }
 }
