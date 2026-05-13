@@ -11,6 +11,7 @@ import '../../gamification/domain/level.dart';
 import '../../gamification/domain/streak.dart';
 import '../../gamification/presentation/badge_unlock_overlay.dart';
 import '../../gamification/presentation/daily_quests_section.dart';
+import '../../gamification/presentation/level_up_overlay.dart';
 import '../data/territory_progress_provider.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -19,9 +20,10 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      body: BadgeUnlockOverlay(
-        child: SafeArea(
-          child: SingleChildScrollView(
+      body: LevelUpOverlay(
+        child: BadgeUnlockOverlay(
+          child: SafeArea(
+            child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -41,6 +43,7 @@ class HomeScreen extends ConsumerWidget {
                 const SizedBox(height: 24),
               ],
             ),
+          ),
           ),
         ),
       ),
@@ -331,13 +334,24 @@ class _LevelBlock extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    '${_formatPoints(level.currentPoints)} / ${_formatPoints(level.nextThreshold)} pts',
-                    style: GoogleFonts.karla(
-                      fontSize: 12,
-                      color: surfaceBase,
-                      fontWeight: FontWeight.w600,
-                      height: 1.0,
+                  // Compteur de points avec tween fluide entre les valeurs
+                  // successives. Quand le user réclame une quête, on voit
+                  // les points monter au lieu d'un saut brutal.
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(
+                      begin: level.currentPoints.toDouble(),
+                      end: level.currentPoints.toDouble(),
+                    ),
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeOutCubic,
+                    builder: (_, value, _) => Text(
+                      '${_formatPoints(value.round())} / ${_formatPoints(level.nextThreshold)} pts',
+                      style: GoogleFonts.karla(
+                        fontSize: 12,
+                        color: surfaceBase,
+                        fontWeight: FontWeight.w600,
+                        height: 1.0,
+                      ),
                     ),
                   ),
                 ],
@@ -346,13 +360,23 @@ class _LevelBlock extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: level.progressFraction,
-            minHeight: 5,
-            backgroundColor: forestGreen.withValues(alpha: 0.5),
-            valueColor: const AlwaysStoppedAnimation<Color>(goldLight),
+        // Barre XP avec tween fluide entre les fractions successives.
+        // ValueKey sur le niveau : au passage de niveau, la barre se reset
+        // (nouvelle instance) au lieu d'interpoler de 96% → 4% en marche
+        // arrière. La célébration LevelUp dans l'overlay prend le relais.
+        TweenAnimationBuilder<double>(
+          key: ValueKey(level.value),
+          tween: Tween(begin: level.progressFraction, end: level.progressFraction),
+          duration: const Duration(milliseconds: 800),
+          curve: Curves.easeOutCubic,
+          builder: (_, value, _) => ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: value,
+              minHeight: 5,
+              backgroundColor: forestGreen.withValues(alpha: 0.5),
+              valueColor: const AlwaysStoppedAnimation<Color>(goldLight),
+            ),
           ),
         ),
       ],
