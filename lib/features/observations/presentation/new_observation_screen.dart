@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:confetti/confetti.dart';
 import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2579,11 +2579,15 @@ class _SpeciesPickerSheetState extends ConsumerState<_SpeciesPickerSheet> {
 }
 
 /// Dialog de récompense après une observation enregistrée.
-/// Intensité graduée selon (rarity, isFirst) :
-///   - commun + re-obs       : fondu doux, pas de confetti, haptic léger
-///   - rare/épique 1ʳᵉ obs    : scale-in + compteur animé + confetti modéré
-///   - légendaire 1ʳᵉ obs     : tout ci-dessus + halo doré pulsant + pill
-///                             "LÉGENDAIRE" + haptic lourd + confetti dense
+/// Intensité graduée selon (rarity, isFirst) — palette + sparkles + halo
+/// adaptés à chaque rareté, sans jamais sortir le confetti (trop bruyant).
+///
+///   - commun (re-obs)        : scale-in léger, halo absent, haptic doux
+///   - commun (1ʳᵉ obs)        : + pastille rareté + halo discret
+///   - rare 1ʳᵉ obs            : + halo bleu modéré pulsant
+///   - épique 1ʳᵉ obs          : + halo violet pulsant + 3 sparkles ✨ orbitant
+///   - légendaire 1ʳᵉ obs      : + halo doré intense + 6 sparkles ✨ + shimmer
+///                              sur la pastille LÉGENDAIRE + haptic lourd ×3
 class _DiscoveryDialog extends StatefulWidget {
   const _DiscoveryDialog({
     required this.rarity,
@@ -2605,12 +2609,19 @@ class _DiscoveryDialogState extends State<_DiscoveryDialog>
   late final Animation<double> _scale;
   late final Animation<double> _pointsTween;
   late final AnimationController _halo;
-  late final ConfettiController _confetti;
 
   bool get _isLegendary => widget.rarity == Rarity.legendary;
   bool get _isEpic => widget.rarity == Rarity.epic;
-  bool get _hasConfetti =>
-      widget.isFirst && widget.rarity != Rarity.common;
+  bool get _showHalo => widget.isFirst && widget.rarity != Rarity.common;
+
+  /// Nombre de sparkles autour de l'icône (0 / 3 / 6 selon la rareté).
+  /// Limité aux 1ʳᵉs obs (re-obs reste sobre).
+  int get _sparkleCount {
+    if (!widget.isFirst) return 0;
+    if (_isLegendary) return 6;
+    if (_isEpic) return 3;
+    return 0;
+  }
 
   @override
   void initState() {
@@ -2629,14 +2640,11 @@ class _DiscoveryDialogState extends State<_DiscoveryDialog>
       parent: _entry,
       curve: const Interval(0.3, 1, curve: Curves.easeOutCubic),
     );
-    // Halo : pulse continu pendant 2s puis stable. Uniquement pour épique/légendaire.
+    // Halo : pulse continu. Uniquement pour rare/épique/légendaire.
     _halo = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat(reverse: true);
-    _confetti = ConfettiController(
-      duration: Duration(milliseconds: _isLegendary ? 2200 : 1400),
-    );
 
     // Démarre l'animation après le 1er frame pour que la haptic soit synchro
     // avec le scale-in.
@@ -2644,7 +2652,6 @@ class _DiscoveryDialogState extends State<_DiscoveryDialog>
       if (!mounted) return;
       _entry.forward();
       _triggerHaptics();
-      if (_hasConfetti) _confetti.play();
     });
   }
 
@@ -2673,7 +2680,6 @@ class _DiscoveryDialogState extends State<_DiscoveryDialog>
   void dispose() {
     _entry.dispose();
     _halo.dispose();
-    _confetti.dispose();
     super.dispose();
   }
 
@@ -2694,72 +2700,59 @@ class _DiscoveryDialogState extends State<_DiscoveryDialog>
   @override
   Widget build(BuildContext context) {
     final color = _rarityColor;
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        // Le confetti rayonne du haut vers le bas, derrière la dialog.
-        if (_hasConfetti)
-          Align(
-            alignment: Alignment.topCenter,
-            child: ConfettiWidget(
-              confettiController: _confetti,
-              blastDirection: math.pi / 2,
-              blastDirectionality: BlastDirectionality.explosive,
-              maxBlastForce: _isLegendary ? 28 : 18,
-              minBlastForce: _isLegendary ? 12 : 8,
-              emissionFrequency: _isLegendary ? 0.08 : 0.05,
-              numberOfParticles: _isLegendary ? 24 : 14,
-              gravity: 0.28,
-              colors: _isLegendary
-                  ? const [gold, goldLight, terracotta, forestGreen]
-                  : [color, color.withValues(alpha: 0.7), gold, terracotta],
-            ),
-          ),
-        Dialog(
-          backgroundColor: surfaceBase,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          child: AnimatedBuilder(
-            animation: _entry,
-            builder: (_, _) {
-              // Scale-in léger pour la card entière (subtil, pas de bounce ici).
-              final cardScale = 0.92 + 0.08 * _scale.value.clamp(0.0, 1.0);
-              return Transform.scale(
-                scale: cardScale,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Pastille rareté (premier obs seulement)
-                      if (widget.isFirst) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: color, width: 1.2),
-                          ),
-                          child: Text(
-                            _rarityLabel,
-                            style: GoogleFonts.karla(
-                              fontSize: 10,
-                              letterSpacing: 2,
-                              fontWeight: FontWeight.bold,
-                              color: color,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      // Icône + halo
-                      _HeroIcon(
-                        color: color,
-                        scale: _scale,
-                        halo: _halo,
-                        showHalo: _isEpic || _isLegendary,
-                        showSparkle: widget.isFirst,
-                      ),
+    // Pastille de rareté avec shimmer pour le légendaire (effet "or vivant").
+    Widget pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 1.2),
+      ),
+      child: Text(
+        _rarityLabel,
+        style: GoogleFonts.karla(
+          fontSize: 10,
+          letterSpacing: 2,
+          fontWeight: FontWeight.bold,
+          color: color,
+        ),
+      ),
+    );
+    if (_isLegendary) {
+      pill = pill.animate(onPlay: (c) => c.repeat()).shimmer(
+            duration: const Duration(milliseconds: 1800),
+            color: goldLight.withValues(alpha: 0.7),
+          );
+    }
+    return Dialog(
+      backgroundColor: surfaceBase,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: AnimatedBuilder(
+        animation: _entry,
+        builder: (_, _) {
+          // Scale-in léger pour la card entière (subtil, pas de bounce ici).
+          final cardScale = 0.92 + 0.08 * _scale.value.clamp(0.0, 1.0);
+          return Transform.scale(
+            scale: cardScale,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Pastille rareté (premier obs seulement)
+                  if (widget.isFirst) ...[
+                    pill,
+                    const SizedBox(height: 12),
+                  ],
+                  // Icône + halo + sparkles orbitants
+                  _HeroIcon(
+                    color: color,
+                    scale: _scale,
+                    halo: _halo,
+                    showHalo: _showHalo,
+                    showSparkle: widget.isFirst,
+                    sparkleCount: _sparkleCount,
+                  ),
                       const SizedBox(height: 14),
                       Text(
                         widget.isFirst ? 'Découverte !' : 'Marqueur ajouté',
@@ -2811,14 +2804,12 @@ class _DiscoveryDialogState extends State<_DiscoveryDialog>
               );
             },
           ),
-        ),
-      ],
-    );
+        );
   }
 }
 
 /// Cercle gradient + icône ✨, avec halo pulsant en option pour les raretés
-/// hautes. Le scale grossit avec une courbe elasticOut au mount.
+/// hautes. Sparkles orbitants quand sparkleCount > 0 (épique/légendaire).
 class _HeroIcon extends StatelessWidget {
   const _HeroIcon({
     required this.color,
@@ -2826,6 +2817,7 @@ class _HeroIcon extends StatelessWidget {
     required this.halo,
     required this.showHalo,
     required this.showSparkle,
+    required this.sparkleCount,
   });
 
   final Color color;
@@ -2834,44 +2826,97 @@ class _HeroIcon extends StatelessWidget {
   final bool showHalo;
   final bool showSparkle;
 
+  /// Nombre de sparkles ✨ disposés en cercle autour de l'icône.
+  /// 0 = pas d'effet ; 3 = épique ; 6 = légendaire.
+  final int sparkleCount;
+
+  /// Diamètre du cercle imaginaire sur lequel les sparkles sont positionnés.
+  /// Légèrement plus grand que l'icône (88px) pour qu'ils flottent autour.
+  static const double _orbitRadius = 60;
+
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([scale, halo]),
-      builder: (_, _) {
-        final s = scale.value;
-        final haloAlpha = showHalo ? 0.35 + 0.35 * halo.value : 0.0;
-        final haloBlur = showHalo ? 18 + halo.value * 14 : 0.0;
-        return Transform.scale(
-          scale: 0.4 + 0.6 * s.clamp(0.0, 1.0),
-          child: Container(
-            width: 88,
-            height: 88,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [color, color.withValues(alpha: 0.75)],
-              ),
-              boxShadow: showHalo
-                  ? [
-                      BoxShadow(
-                        color: color.withValues(alpha: haloAlpha),
-                        blurRadius: haloBlur,
-                        spreadRadius: 2,
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Icon(
-              showSparkle ? Icons.auto_awesome : Icons.check,
-              size: 44,
-              color: surfaceBase,
-            ),
+    final size = sparkleCount > 0 ? _orbitRadius * 2 + 24 : 88.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        clipBehavior: Clip.none,
+        children: [
+          // Sparkles orbitants : un par position calculée, chacun avec un
+          // délai différent pour un effet "scintillement asynchrone" plus
+          // organique qu'un blink synchronisé.
+          for (var i = 0; i < sparkleCount; i++) _buildSparkle(i),
+          // Icône centrale (toujours présente)
+          AnimatedBuilder(
+            animation: Listenable.merge([scale, halo]),
+            builder: (_, _) {
+              final s = scale.value;
+              final haloAlpha = showHalo ? 0.35 + 0.35 * halo.value : 0.0;
+              final haloBlur = showHalo ? 18 + halo.value * 14 : 0.0;
+              return Transform.scale(
+                scale: 0.4 + 0.6 * s.clamp(0.0, 1.0),
+                child: Container(
+                  width: 88,
+                  height: 88,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [color, color.withValues(alpha: 0.75)],
+                    ),
+                    boxShadow: showHalo
+                        ? [
+                            BoxShadow(
+                              color: color.withValues(alpha: haloAlpha),
+                              blurRadius: haloBlur,
+                              spreadRadius: 2,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Icon(
+                    showSparkle ? Icons.auto_awesome : Icons.check,
+                    size: 44,
+                    color: surfaceBase,
+                  ),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSparkle(int index) {
+    final angle = (index / sparkleCount) * 2 * math.pi - math.pi / 2;
+    final dx = _orbitRadius * math.cos(angle);
+    final dy = _orbitRadius * math.sin(angle);
+    // Délai stagger : chaque sparkle commence son cycle à un moment différent
+    // pour un effet "constellation vivante" vs blink synchronisé.
+    final delay = Duration(milliseconds: 120 * index);
+    return Transform.translate(
+      offset: Offset(dx, dy),
+      child: const Text('✨', style: TextStyle(fontSize: 16))
+          .animate(onPlay: (c) => c.repeat())
+          .scale(
+            delay: delay,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOut,
+            begin: const Offset(0, 0),
+            end: const Offset(1, 1),
+          )
+          .then(delay: const Duration(milliseconds: 700))
+          .scale(
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeIn,
+            begin: const Offset(1, 1),
+            end: const Offset(0, 0),
+          )
+          .then(delay: const Duration(milliseconds: 400)),
     );
   }
 }
