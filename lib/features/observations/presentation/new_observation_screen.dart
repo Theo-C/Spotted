@@ -78,6 +78,12 @@ class _NewObservationScreenState
   bool _identifying = false;
   bool _suggestionDismissed = false;
 
+  /// Candidat IA accepté par l'user — sert à highlight visuellement le bon
+  /// dans la suggestion card (sinon rank 1 reste highlighted en permanence,
+  /// ce qui donne l'illusion que c'est lui le choix de l'user).
+  /// Null si rien d'accepté (initial ou reset après nouvelle photo).
+  SpeciesCandidate? _acceptedCandidate;
+
   // -----------------------------------------------------------
   // Photo-first : résolution territoriale dès que la position est connue,
   // au lieu d'attendre le submit. Évite le dialog rareté surprise au save.
@@ -294,6 +300,7 @@ class _NewObservationScreenState
       _identification = null;
       _suggestionDismissed = false;
       _identifying = false;
+      _acceptedCandidate = null;
     });
     // Photo-first : on lance la résolution territoriale tout de suite (au lieu
     // d'attendre le submit). Si la photo a un EXIF GPS, on saura immédiatement
@@ -378,6 +385,8 @@ class _NewObservationScreenState
 
   Future<void> _acceptCandidate(SpeciesCandidate candidate) async {
     if (candidate.scientificName.isEmpty) return;
+    // Marque visuellement le candidat choisi dans la suggestion card.
+    setState(() => _acceptedCandidate = candidate);
     // Recherche GLOBALE par nom scientifique (toutes zones confondues).
     // L'ancienne version cherchait dans _zoneSpeciesProvider(zone), ce qui
     // ratait deux cas :
@@ -447,7 +456,11 @@ class _NewObservationScreenState
       builder: (_) => _SpeciesPickerSheet(zoneId: pickerZone.id),
     );
     if (result != null) {
-      setState(() => _selectedSpeciesId = result);
+      setState(() {
+        _selectedSpeciesId = result;
+        // Choix via le picker manuel = on désélectionne tout candidat IA.
+        _acceptedCandidate = null;
+      });
       unawaited(_resolveSpeciesRarity());
     }
   }
@@ -657,6 +670,7 @@ class _NewObservationScreenState
               _IaSuggestionCard(
                 identifying: _identifying,
                 identification: _identification,
+                acceptedCandidate: _acceptedCandidate,
                 onAcceptCandidate: _acceptCandidate,
                 onDismiss: () => setState(() => _suggestionDismissed = true),
               ),
@@ -980,12 +994,18 @@ class _IaSuggestionCard extends StatelessWidget {
   const _IaSuggestionCard({
     required this.identifying,
     required this.identification,
+    required this.acceptedCandidate,
     required this.onAcceptCandidate,
     required this.onDismiss,
   });
 
   final bool identifying;
   final SpeciesIdentification? identification;
+
+  /// Candidat actuellement choisi par l'user — sert à marquer visuellement
+  /// la sélection. Null = aucun choix encore, on highlight le rank 1 par
+  /// défaut (recommandation IA).
+  final SpeciesCandidate? acceptedCandidate;
   final void Function(SpeciesCandidate) onAcceptCandidate;
   final VoidCallback onDismiss;
 
@@ -1113,14 +1133,29 @@ class _IaSuggestionCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 10),
-          for (var i = 0; i < id.candidates.length; i++) ...[
-            _CandidateRow(
-              candidate: id.candidates[i],
-              rank: i + 1,
-              onTap: () => onAcceptCandidate(id.candidates[i]),
-            ),
-            if (i < id.candidates.length - 1) const SizedBox(height: 6),
-          ],
+          // Index du candidat sélectionné par l'user. Si aucun n'a encore
+          // été touché, on highlight le rank 1 par défaut (recommandation
+          // initiale de l'IA, comme c'était le cas avant le fix).
+          ...() {
+            final selectedIdx = acceptedCandidate == null
+                ? 0
+                : id.candidates.indexWhere(
+                    (c) => c.scientificName == acceptedCandidate!.scientificName,
+                  );
+            return [
+              for (var i = 0; i < id.candidates.length; i++) ...[
+                _CandidateRow(
+                  candidate: id.candidates[i],
+                  rank: i + 1,
+                  isSelected: i == selectedIdx,
+                  hasUserChoice: acceptedCandidate != null,
+                  onTap: () => onAcceptCandidate(id.candidates[i]),
+                ),
+                if (i < id.candidates.length - 1)
+                  const SizedBox(height: 6),
+              ],
+            ];
+          }(),
         ],
       ),
     );
@@ -1131,19 +1166,31 @@ class _CandidateRow extends StatelessWidget {
   const _CandidateRow({
     required this.candidate,
     required this.rank,
+    required this.isSelected,
+    required this.hasUserChoice,
     required this.onTap,
   });
 
   final SpeciesCandidate candidate;
   final int rank;
+
+  /// True si c'est ce candidat qui doit être mis en évidence (= choix user
+  /// si hasUserChoice, sinon rank 1 par défaut).
+  final bool isSelected;
+
+  /// True dès que l'user a fait un choix explicite — sert à différencier
+  /// "highlight = recommandation IA initiale" et "highlight = j'ai cliqué".
+  /// On affiche un check ✓ uniquement dans le second cas.
+  final bool hasUserChoice;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final pct = (candidate.confidence * 100).round();
     final isLow = candidate.confidence < 0.5;
+    final showCheck = isSelected && hasUserChoice;
     return Material(
-      color: rank == 1 ? surfaceBase : surfaceCard,
+      color: isSelected ? surfaceBase : surfaceCard,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
@@ -1152,8 +1199,10 @@ class _CandidateRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             border: Border.all(
-              color: rank == 1 ? gold : const Color(0xFFE8E0CE),
-              width: rank == 1 ? 1.5 : 1,
+              color: isSelected
+                  ? (hasUserChoice ? forestGreen : gold)
+                  : const Color(0xFFE8E0CE),
+              width: isSelected ? 1.8 : 1,
             ),
             borderRadius: BorderRadius.circular(10),
           ),
@@ -1164,19 +1213,25 @@ class _CandidateRow extends StatelessWidget {
                 height: 22,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: rank == 1
-                      ? gold
+                  color: isSelected
+                      ? (hasUserChoice ? forestGreen : gold)
                       : const Color(0xFFE8E0CE),
                 ),
                 child: Center(
-                  child: Text(
-                    '$rank',
-                    style: GoogleFonts.karla(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: rank == 1 ? forestGreen : textSecondary,
-                    ),
-                  ),
+                  child: showCheck
+                      ? const Icon(
+                          Icons.check,
+                          size: 14,
+                          color: surfaceBase,
+                        )
+                      : Text(
+                          '$rank',
+                          style: GoogleFonts.karla(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isSelected ? forestGreen : textSecondary,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(width: 10),
