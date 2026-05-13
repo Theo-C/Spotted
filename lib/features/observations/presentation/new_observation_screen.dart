@@ -369,10 +369,23 @@ class _NewObservationScreenState
     });
   }
 
+  /// Zone détectée pour la photo/position courante, ou null si l'user n'a pas
+  /// encore positionné. Utilisée pour pré-cocher le bon territoire dans le
+  /// dialog d'ajout d'espèce et pour rechercher les doublons dans la bonne zone.
+  Zone? get _detectedZone => _zoneResolution is _ZoneResolved
+      ? (_zoneResolution as _ZoneResolved).zone
+      : null;
+
   Future<void> _acceptCandidate(SpeciesCandidate candidate) async {
     if (candidate.scientificName.isEmpty) return;
-    final oise = await ref.read(oiseZoneProvider.future);
-    final allSpecies = await ref.read(_zoneSpeciesProvider(oise.id).future);
+    // Recherche du doublon dans la zone détectée. Si pas de zone détectée
+    // (user pas encore positionné), on retombe sur Oise pour la recherche
+    // — l'user devra de toute façon corriger la position, le dialog d'ajout
+    // ne pré-cochera aucun territoire pour qu'il fasse un choix explicite.
+    final detectedZone = _detectedZone;
+    final searchZoneId = detectedZone?.id ??
+        (await ref.read(oiseZoneProvider.future)).id;
+    final allSpecies = await ref.read(_zoneSpeciesProvider(searchZoneId).future);
     final scientificLower = candidate.scientificName.toLowerCase();
     final match = allSpecies.cast<({Species species, Rarity rarity})?>().firstWhere(
           (s) =>
@@ -388,8 +401,10 @@ class _NewObservationScreenState
       // Espèce non curée → dialog d'ajout in-place.
       final newId = await showDialog<String>(
         context: context,
-        builder: (_) =>
-            _AddSpeciesDialog(candidate: candidate, zoneId: oise.id),
+        builder: (_) => _AddSpeciesDialog(
+          candidate: candidate,
+          initialZoneId: detectedZone?.id,
+        ),
       );
       if (newId != null && mounted) {
         ref.invalidate(_zoneSpeciesProvider);
@@ -412,7 +427,11 @@ class _NewObservationScreenState
   }
 
   Future<void> _pickSpecies() async {
-    final oise = await ref.read(oiseZoneProvider.future);
+    // Le picker liste les espèces curées de la zone détectée. Si pas de
+    // zone (user pas encore positionné), on retombe sur Oise pour ne pas
+    // ouvrir un picker vide ; mais l'idéal est que l'user positionne d'abord.
+    final Zone pickerZone =
+        _detectedZone ?? await ref.read(oiseZoneProvider.future);
     if (!mounted) return;
     final result = await showModalBottomSheet<String>(
       context: context,
@@ -421,7 +440,7 @@ class _NewObservationScreenState
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (_) => _SpeciesPickerSheet(zoneId: oise.id),
+      builder: (_) => _SpeciesPickerSheet(zoneId: pickerZone.id),
     );
     if (result != null) {
       setState(() => _selectedSpeciesId = result);
@@ -1218,10 +1237,14 @@ class _CandidateRow extends StatelessWidget {
 ///     éditables. Cas d'une espèce vraiment nouvelle (jamais observée nulle
 ///     part) ; on demande tout pour qu'elle entre proprement dans le catalogue.
 class _AddSpeciesDialog extends ConsumerStatefulWidget {
-  const _AddSpeciesDialog({this.candidate, required this.zoneId});
+  const _AddSpeciesDialog({this.candidate, this.initialZoneId});
 
   final SpeciesCandidate? candidate;
-  final String zoneId;
+
+  /// Zone à pré-cocher dans le sélecteur de territoires. En provenance de la
+  /// position courante (EXIF photo ou map picker). Null = aucune position
+  /// connue → on ne pré-coche rien, l'user doit explicitement choisir.
+  final String? initialZoneId;
 
   @override
   ConsumerState<_AddSpeciesDialog> createState() => _AddSpeciesDialogState();
@@ -1239,10 +1262,13 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
   File? _pickedPhoto;
 
   /// Set des zone_id auxquels l'espèce sera liée à la création.
-  /// Initialisé sur la zone passée en param (généralement la zone détectée
-  /// par geocoding), modifiable par l'user via les chips FilterChip.
-  /// Insert species_zones se fait pour chacune avec la même rareté.
-  late final Set<String> _selectedZoneIds = {widget.zoneId};
+  /// Pré-coché sur la zone détectée si l'user est positionné, sinon vide
+  /// (il devra cocher explicitement — pas de défaut Oise arbitraire).
+  /// Modifiable via les chips FilterChip. Insert species_zones se fait pour
+  /// chacune avec la même rareté.
+  late final Set<String> _selectedZoneIds = widget.initialZoneId == null
+      ? <String>{}
+      : {widget.initialZoneId!};
 
   /// URL photo récupérée depuis species_reference (iNat-enriched).
   /// Pré-affichée dans le picker comme photo "existante" ; ré-utilisée
@@ -2339,7 +2365,8 @@ class _SpeciesPickerSheetState extends ConsumerState<_SpeciesPickerSheet> {
               // Bouton pour ajouter une espèce vraiment nouvelle (jamais
               // observée nulle part). Ouvre _AddSpeciesDialog en mode manuel
               // (sans candidat IA, tous les champs éditables) et pop le
-              // picker avec l'id de l'espèce créée.
+              // picker avec l'id de l'espèce créée. Pré-coche la zone du
+              // picker (= zone détectée pour l'obs en cours).
               Material(
                 color: Colors.transparent,
                 child: InkWell(
@@ -2347,7 +2374,8 @@ class _SpeciesPickerSheetState extends ConsumerState<_SpeciesPickerSheet> {
                   onTap: () async {
                     final newId = await showDialog<String>(
                       context: context,
-                      builder: (_) => _AddSpeciesDialog(zoneId: widget.zoneId),
+                      builder: (_) =>
+                          _AddSpeciesDialog(initialZoneId: widget.zoneId),
                     );
                     if (newId != null && mounted) {
                       ref.invalidate(_zoneSpeciesProvider);
