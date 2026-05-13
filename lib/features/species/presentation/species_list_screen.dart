@@ -13,6 +13,12 @@ import '../data/species_with_rarity_provider.dart';
 
 enum _StatusFilter { all, observed, mystery }
 
+enum _SortBy {
+  rarityDesc,   // Légendaires en haut — défaut, pousse à chasser les rares.
+  unseenFirst,  // Mystères en haut — utile pour planifier la prochaine sortie.
+  nameAsc,      // Ordre alphabétique sur le commonName.
+}
+
 class SpeciesListScreen extends ConsumerStatefulWidget {
   const SpeciesListScreen({
     super.key,
@@ -30,6 +36,27 @@ class SpeciesListScreen extends ConsumerStatefulWidget {
 class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
   _StatusFilter _status = _StatusFilter.all;
   Rarity? _rarity; // null = toutes raretés
+  _SortBy _sort = _SortBy.rarityDesc;
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Normalise accents + casse pour la recherche : "Faucon pèlerin" matche
+  /// "faucon pelerin" sans qu'il ait à taper les accents.
+  static String _normalize(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp(r'[àâä]'), 'a')
+      .replaceAll(RegExp(r'[éèêë]'), 'e')
+      .replaceAll(RegExp(r'[îï]'), 'i')
+      .replaceAll(RegExp(r'[ôö]'), 'o')
+      .replaceAll(RegExp(r'[ûüù]'), 'u')
+      .replaceAll('ç', 'c')
+      .replaceAll(RegExp(r"['’]"), '');
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +125,17 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                child: _SearchAndSortRow(
+                  controller: _searchController,
+                  onQueryChanged: (q) => setState(() => _query = q),
+                  sort: _sort,
+                  onSortChanged: (s) => setState(() => _sort = s),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
                 child: _StatusFilters(
                   current: _status,
                   onChanged: (f) => setState(() => _status = f),
@@ -137,6 +175,7 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
                 ),
                 data: (allItems) {
                   final observed = observedIdsAsync.asData?.value ?? <String>{};
+                  final normQuery = _normalize(_query.trim());
                   final filtered = allItems.where((it) {
                     if (_rarity != null && it.rarity != _rarity) return false;
                     final isObserved = observed.contains(it.species.id);
@@ -146,8 +185,44 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
                     if (_status == _StatusFilter.mystery && isObserved) {
                       return false;
                     }
+                    if (normQuery.isNotEmpty) {
+                      final inCommon =
+                          _normalize(it.species.commonName).contains(normQuery);
+                      final inSci = _normalize(it.species.scientificName)
+                          .contains(normQuery);
+                      if (!inCommon && !inSci) return false;
+                    }
                     return true;
                   }).toList();
+
+                  // Tri appliqué après les filtres. L'ordre du tri principal
+                  // est complété par le nom comme critère secondaire pour la
+                  // stabilité visuelle.
+                  const rarityOrder = {
+                    Rarity.legendary: 0,
+                    Rarity.epic: 1,
+                    Rarity.rare: 2,
+                    Rarity.common: 3,
+                  };
+                  int byName(({dynamic species, Rarity rarity}) a,
+                          ({dynamic species, Rarity rarity}) b) =>
+                      (a.species.commonName as String)
+                          .compareTo(b.species.commonName as String);
+                  filtered.sort((a, b) {
+                    switch (_sort) {
+                      case _SortBy.rarityDesc:
+                        final c =
+                            rarityOrder[a.rarity]! - rarityOrder[b.rarity]!;
+                        return c != 0 ? c : byName(a, b);
+                      case _SortBy.unseenFirst:
+                        final aObs = observed.contains(a.species.id);
+                        final bObs = observed.contains(b.species.id);
+                        if (aObs != bObs) return aObs ? 1 : -1;
+                        return byName(a, b);
+                      case _SortBy.nameAsc:
+                        return byName(a, b);
+                    }
+                  });
 
                   if (filtered.isEmpty) {
                     return SliverToBoxAdapter(
@@ -576,4 +651,137 @@ class _RarityPill extends StatelessWidget {
       Rarity.legendary => rarityLegendary,
     };
   }
+}
+
+// =============================================================
+// _SearchAndSortRow — champ recherche + bouton tri
+// =============================================================
+//
+// Champ recherche en flex sur la gauche (filtre par commonName ou
+// scientificName, insensible à la casse et aux accents), bouton tri à
+// droite qui ouvre un PopupMenu avec les 3 modes (rareté ↓ / non vues /
+// nom A→Z).
+
+class _SearchAndSortRow extends StatelessWidget {
+  const _SearchAndSortRow({
+    required this.controller,
+    required this.onQueryChanged,
+    required this.sort,
+    required this.onSortChanged,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onQueryChanged;
+  final _SortBy sort;
+  final ValueChanged<_SortBy> onSortChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: surfaceCard,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.search, size: 16, color: textSecondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    onChanged: onQueryChanged,
+                    textInputAction: TextInputAction.search,
+                    style: GoogleFonts.karla(
+                      fontSize: 13,
+                      color: textPrimary,
+                    ),
+                    decoration: InputDecoration(
+                      isCollapsed: true,
+                      border: InputBorder.none,
+                      hintText: 'Buse, faucon, alcedo…',
+                      hintStyle: GoogleFonts.karla(
+                        fontSize: 13,
+                        color: textMuted,
+                      ),
+                    ),
+                  ),
+                ),
+                if (controller.text.isNotEmpty)
+                  GestureDetector(
+                    onTap: () {
+                      controller.clear();
+                      onQueryChanged('');
+                    },
+                    child: const Icon(Icons.close, size: 14, color: textMuted),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Bouton tri — ouvre un PopupMenu avec les 3 options.
+        PopupMenuButton<_SortBy>(
+          tooltip: 'Trier',
+          onSelected: onSortChanged,
+          color: surfaceCard,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Color(0xFFE8E0CE)),
+          ),
+          itemBuilder: (_) => [
+            for (final s in _SortBy.values)
+              PopupMenuItem(
+                value: s,
+                child: Row(
+                  children: [
+                    if (sort == s)
+                      const Icon(Icons.check, size: 14, color: forestGreen)
+                    else
+                      const SizedBox(width: 14),
+                    const SizedBox(width: 8),
+                    Text(
+                      _sortLabel(s),
+                      style: GoogleFonts.karla(
+                        fontSize: 13,
+                        color: sort == s ? forestGreen : textPrimary,
+                        fontWeight:
+                            sort == s ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          child: Container(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: surfaceCard,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFE8E0CE), width: 1.5),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.sort, size: 16, color: forestGreen),
+                SizedBox(width: 4),
+                Icon(Icons.expand_more, size: 14, color: forestGreen),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _sortLabel(_SortBy s) => switch (s) {
+        _SortBy.rarityDesc => 'Rareté ↓',
+        _SortBy.unseenFirst => "Non vues d'abord",
+        _SortBy.nameAsc => 'Nom A→Z',
+      };
 }
