@@ -618,116 +618,67 @@ class _StreakNotifsTile extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.notifications_active_outlined,
-                  size: 20, color: forestGreen),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Rappel quotidien',
-                      style: GoogleFonts.karla(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: forestGreen,
-                      ),
-                    ),
-                    Text(
-                      'Notification à 13:00 pour entretenir ta série',
-                      style: GoogleFonts.karla(
-                        fontSize: 11,
-                        fontStyle: FontStyle.italic,
-                        color: textSecondary,
-                      ),
-                    ),
-                  ],
+          const Icon(Icons.notifications_active_outlined,
+              size: 20, color: forestGreen),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Rappel quotidien',
+                  style: GoogleFonts.karla(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: forestGreen,
+                  ),
                 ),
-              ),
-              enabledAsync.when(
-                loading: () => const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: forestGreen),
+                Text(
+                  'Notification à 13:00 pour entretenir ta série',
+                  style: GoogleFonts.karla(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: textSecondary,
+                  ),
                 ),
-                error: (e, _) => const Icon(Icons.error, color: terracotta),
-                data: (enabled) => Switch.adaptive(
-                  value: enabled,
-                  activeThumbColor: surfaceBase,
-                  activeTrackColor: forestGreen,
-                  onChanged: (v) async {
-                    final service = ref.read(notificationsServiceProvider);
-                    if (v) {
-                      final ok = await service.enable();
-                      if (!ok && context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            backgroundColor: terracotta,
-                            content: Text(
-                              "Permission refusée — autorise les notifs dans les réglages système.",
-                              style: GoogleFonts.karla(color: surfaceBase),
-                            ),
-                          ),
-                        );
-                      }
-                    } else {
-                      await service.disable();
-                    }
-                    ref.invalidate(notificationsEnabledProvider);
-                  },
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-          // Bouton "Tester maintenant" — visible uniquement quand les rappels
-          // sont activés. Programme une notif dans 10s pour vérifier le canal,
-          // les permissions et la timezone sans attendre 13h.
-          if (enabledAsync.asData?.value == true) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.only(left: 34),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: () async {
-                    final service = ref.read(notificationsServiceProvider);
-                    final ok = await service.scheduleTestNotification();
-                    if (!context.mounted) return;
+          enabledAsync.when(
+            loading: () => const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2, color: forestGreen),
+            ),
+            error: (e, _) => const Icon(Icons.error, color: terracotta),
+            data: (enabled) => Switch.adaptive(
+              value: enabled,
+              activeThumbColor: surfaceBase,
+              activeTrackColor: forestGreen,
+              onChanged: (v) async {
+                final service = ref.read(notificationsServiceProvider);
+                if (v) {
+                  final ok = await service.enable();
+                  if (!ok && context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        backgroundColor: ok ? forestGreen : terracotta,
+                        backgroundColor: terracotta,
                         content: Text(
-                          ok
-                              ? 'Notif test prévue dans ~10s'
-                              : 'Permission refusée — réactive dans les réglages système.',
+                          "Permission refusée — autorise les notifs dans les réglages système.",
                           style: GoogleFonts.karla(color: surfaceBase),
                         ),
                       ),
                     );
-                  },
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    'Tester maintenant →',
-                    style: GoogleFonts.karla(
-                      fontSize: 11,
-                      letterSpacing: 1,
-                      fontWeight: FontWeight.bold,
-                      color: terracotta,
-                    ),
-                  ),
-                ),
-              ),
+                  }
+                } else {
+                  await service.disable();
+                }
+                ref.invalidate(notificationsEnabledProvider);
+              },
             ),
-          ],
+          ),
         ],
       ),
     );

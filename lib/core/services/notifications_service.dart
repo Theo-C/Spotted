@@ -145,39 +145,6 @@ class NotificationsService {
     }
   }
 
-  /// Affiche une notif "test" immédiatement (pas de scheduling) pour vérifier
-  /// que le canal et la permission POST_NOTIFICATIONS fonctionnent. Utile
-  /// depuis le bouton "Tester" dans Profil > Réglages.
-  ///
-  /// On utilise [show] et pas [zonedSchedule] pour 2 raisons :
-  ///   1. Pas besoin de la permission spéciale SCHEDULE_EXACT_ALARM (sinon
-  ///      l'API throw exact_alarms_not_permitted sur Android 12+ si l'user
-  ///      n'a pas accordé manuellement).
-  ///   2. Test instantané, pas d'attente de 10s qui pourrait être retardée
-  ///      en doze mode.
-  ///
-  /// ID dédié (_streakNotifId + 1) pour ne pas écraser le rappel quotidien.
-  Future<bool> scheduleTestNotification() async {
-    await _ensureInitialized();
-    final status = await Permission.notification.request();
-    if (!status.isGranted) return false;
-    await _plugin.show(
-      _streakNotifId + 1,
-      'Test Spotted 🔥',
-      "Si tu vois cette notif, le canal fonctionne. La vraie arrivera à 13h.",
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          'Rappel série',
-          channelDescription: 'Rappel quotidien pour entretenir la série',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-        iOS: DarwinNotificationDetails(),
-      ),
-    );
-    return true;
-  }
 }
 
 final notificationsServiceProvider = Provider<NotificationsService>((ref) {
