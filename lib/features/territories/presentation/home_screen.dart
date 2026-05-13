@@ -13,13 +13,6 @@ import '../../gamification/presentation/badge_unlock_overlay.dart';
 import '../../gamification/presentation/daily_quests_section.dart';
 import '../data/territory_progress_provider.dart';
 
-/// Config d'affichage par zone — donne le tag ("DOMICILE" / "VOISIN") et la
-/// couleur de tag. À terme à passer sur la table zones (ex: `display_tag`).
-const _zoneDisplay = <String, ({String tag, Color tagColor})>{
-  '60': (tag: 'DOMICILE', tagColor: gold),
-  '02': (tag: 'VOISIN',   tagColor: terracotta),
-};
-
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -522,13 +515,13 @@ class _SectionLabel extends StatelessWidget {
 }
 
 // =============================================================
-// _TerritoriesList — itère depuis allZonesProvider (vs hard-codé)
+// _TerritoriesList — hero = terrain courant (GPS), reste en compact
 // =============================================================
-
-// _TerritoriesList — hero pour le 1er (DOMICILE), liste compacte pour le reste.
-// Plus de mini-cartes statiques Mapbox (charge inutile + zero info actionnable).
-// La pastille polymorphe (numéro département FR pour l'instant) pourra à
-// terme afficher un drapeau pour les zones étrangères.
+//
+// Le hero est dynamique : on prend la zone détectée par
+// [currentTerritoryProvider] (GPS fresh > cache prefs > 1ʳᵉ zone par défaut).
+// Les autres zones suivent en lignes compactes. Plus de tag statique
+// DOMICILE/VOISIN : la position dans la liste = "où tu es maintenant".
 
 class _TerritoriesList extends ConsumerWidget {
   const _TerritoriesList({required this.zonesAsync});
@@ -537,6 +530,7 @@ class _TerritoriesList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final currentAsync = ref.watch(currentTerritoryProvider);
     return zonesAsync.when(
       loading: () => const SizedBox(
         height: 100,
@@ -557,21 +551,27 @@ class _TerritoriesList extends ConsumerWidget {
       ),
       data: (zones) {
         if (zones.isEmpty) return const SizedBox.shrink();
+        // Hero = la zone "ici" si résolue, sinon par défaut la 1ʳᵉ de la liste.
+        // currentAsync peut être en loading le temps du round-trip GPS+geocode.
+        final current = currentAsync.asData?.value;
+        final heroZone = current?.zone ?? zones.first;
+        final heroFromGps = current?.fromGps ?? false;
+        final others =
+            zones.where((z) => z.id != heroZone.id).toList(growable: false);
         return Column(
           children: [
             _TerritoryHero(
-              zone: zones.first,
-              progressAsync: ref.watch(
-                zoneProgressProvider(zones.first.shortCode ?? ''),
-              ),
+              zone: heroZone,
+              fromGps: heroFromGps,
+              progressAsync:
+                  ref.watch(zoneProgressProvider(heroZone.shortCode ?? '')),
             ),
-            for (var i = 1; i < zones.length; i++) ...[
+            for (final z in others) ...[
               const SizedBox(height: 8),
               _TerritoryRowCompact(
-                zone: zones[i],
-                progressAsync: ref.watch(
-                  zoneProgressProvider(zones[i].shortCode ?? ''),
-                ),
+                zone: z,
+                progressAsync:
+                    ref.watch(zoneProgressProvider(z.shortCode ?? '')),
               ),
             ],
           ],
@@ -617,48 +617,27 @@ class _TerritoryBadge extends StatelessWidget {
   }
 }
 
-class _TagPill extends StatelessWidget {
-  const _TagPill({required this.tag, required this.color, this.size = 9});
-
-  final String tag;
-  final Color color;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        tag,
-        style: GoogleFonts.karla(
-          fontSize: size,
-          letterSpacing: 1.5,
-          fontWeight: FontWeight.bold,
-          color: forestGreen,
-        ),
-      ),
-    );
-  }
-}
-
 /// Hero card pour le terrain principal — fond crème + bordure forestGreen,
 /// style "page de carnet". Volontairement différent du _ProgressHeader (qui
 /// est un gradient sombre) pour ne pas faire confusion entre "ma progression"
 /// (gamification) et "mes terrains" (objet d'exploration).
+///
+/// [fromGps] = true affiche un indicateur "📍 ICI" pour faire comprendre à
+/// l'user que ce terrain est en hero parce qu'il y est physiquement (vs
+/// fallback éditorial).
 class _TerritoryHero extends StatelessWidget {
-  const _TerritoryHero({required this.zone, required this.progressAsync});
+  const _TerritoryHero({
+    required this.zone,
+    required this.fromGps,
+    required this.progressAsync,
+  });
 
   final Zone zone;
+  final bool fromGps;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    final display = _zoneDisplay[zone.shortCode] ??
-        (tag: 'AUTRE', tagColor: textSecondary);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Material(
@@ -686,12 +665,9 @@ class _TerritoryHero extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    _TerritoryBadge(
-                      code: zone.shortCode ?? '?',
-                      size: 56,
-                    ),
+                    _TerritoryBadge(code: zone.shortCode ?? '?', size: 56),
                     const Spacer(),
-                    _TagPill(tag: display.tag, color: display.tagColor),
+                    if (fromGps) const _HerePill(),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -710,6 +686,40 @@ class _TerritoryHero extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Petit indicateur "📍 ICI" affiché sur le hero quand la position vient
+/// d'une vraie lecture GPS (et pas du fallback par défaut). Aide l'user à
+/// comprendre pourquoi tel ou tel terrain est mis en avant.
+class _HerePill extends StatelessWidget {
+  const _HerePill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: terracotta,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.place, size: 11, color: surfaceBase),
+          const SizedBox(width: 3),
+          Text(
+            'ICI',
+            style: GoogleFonts.karla(
+              fontSize: 9,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.bold,
+              color: surfaceBase,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -787,7 +797,7 @@ class _TerritoryHeroProgress extends StatelessWidget {
   }
 }
 
-/// Ligne compacte pour les terrains secondaires (VOISIN, VOYAGE…).
+/// Ligne compacte pour les terrains non-actifs (l'user n'y est pas).
 /// ~64 px de haut, tient à 10+ territoires sans scroll.
 class _TerritoryRowCompact extends StatelessWidget {
   const _TerritoryRowCompact({required this.zone, required this.progressAsync});
@@ -797,8 +807,6 @@ class _TerritoryRowCompact extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final display = _zoneDisplay[zone.shortCode] ??
-        (tag: 'AUTRE', tagColor: textSecondary);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Material(
@@ -819,8 +827,6 @@ class _TerritoryRowCompact extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(child: _TerritoryRowInfo(
                   name: zone.name,
-                  tag: display.tag,
-                  tagColor: display.tagColor,
                   progressAsync: progressAsync,
                 )),
                 const Icon(Icons.chevron_right, size: 18, color: forestGreen),
@@ -836,14 +842,10 @@ class _TerritoryRowCompact extends StatelessWidget {
 class _TerritoryRowInfo extends StatelessWidget {
   const _TerritoryRowInfo({
     required this.name,
-    required this.tag,
-    required this.tagColor,
     required this.progressAsync,
   });
 
   final String name;
-  final String tag;
-  final Color tagColor;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
@@ -876,23 +878,15 @@ class _TerritoryRowInfo extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  name,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.cormorantGaramond(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: forestGreen,
-                    height: 1.0,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _TagPill(tag: tag, color: tagColor, size: 8),
-            ],
+          Text(
+            name,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: forestGreen,
+              height: 1.0,
+            ),
           ),
           const SizedBox(height: 5),
           Row(
