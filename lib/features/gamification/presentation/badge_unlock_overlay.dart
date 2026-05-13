@@ -9,9 +9,14 @@ import '../../../app/theme.dart';
 import '../data/gamification_state_provider.dart';
 import '../domain/badge.dart';
 
-/// Écoute le badgesProvider, détecte les unlocks et déclenche une animation
-/// "badge déverrouillé" (confetti + dialog). À monter sur la Home : c'est
-/// l'écran où l'user revient après une obs, donc le bon moment pour fêter.
+/// Wrap d'écran qui consomme la file [pendingBadgeCelebrationsProvider] et
+/// déclenche une animation "badge déverrouillé" (confetti + dialog) pour
+/// chaque badge nouvellement unlock.
+///
+/// Architecture : badgesProvider est responsable de l'INSERT en BDD et de
+/// pousser le badge_id dans la file. L'overlay pop la 1ʳᵉ entrée, célèbre,
+/// puis retire de la file. Si plusieurs badges sont en attente, ils
+/// s'enchaînent automatiquement.
 class BadgeUnlockOverlay extends ConsumerStatefulWidget {
   const BadgeUnlockOverlay({super.key, required this.child});
 
@@ -22,9 +27,6 @@ class BadgeUnlockOverlay extends ConsumerStatefulWidget {
 }
 
 class _BadgeUnlockOverlayState extends ConsumerState<BadgeUnlockOverlay> {
-  /// IDs des badges déjà connus comme earned (snapshot du précédent build).
-  /// On en garde une copie pour faire un diff au prochain rebuild.
-  Set<String>? _previouslyEarned;
   bool _showingDialog = false;
   late final ConfettiController _confetti;
 
@@ -32,6 +34,13 @@ class _BadgeUnlockOverlayState extends ConsumerState<BadgeUnlockOverlay> {
   void initState() {
     super.initState();
     _confetti = ConfettiController(duration: const Duration(seconds: 2));
+    // ref.listen ne fire pas sur la valeur initiale. Si l'overlay se mount
+    // alors que la file est déjà non vide (cas typique : badge unlock pendant
+    // qu'on était sur new_observation_screen), on déclenche manuellement.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _maybeCelebrateNext();
+    });
   }
 
   @override
@@ -42,33 +51,9 @@ class _BadgeUnlockOverlayState extends ConsumerState<BadgeUnlockOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    // Écoute des changements de la liste de badges earned : à chaque nouveau
-    // earned, on déclenche la célébration.
-    ref.listen<AsyncValue<List<BadgeStatus>>>(badgesProvider, (prev, next) {
-      final statuses = next.asData?.value;
-      if (statuses == null) return;
-      final earnedNow = statuses
-          .where((b) => b.isEarned)
-          .map((b) => b.def.id)
-          .toSet();
-
-      if (_previouslyEarned == null) {
-        // 1er chargement : on initialise sans déclencher d'anim.
-        _previouslyEarned = earnedNow;
-        return;
-      }
-
-      final newlyEarned =
-          earnedNow.difference(_previouslyEarned!).toList();
-      _previouslyEarned = earnedNow;
-      if (newlyEarned.isEmpty || _showingDialog) return;
-
-      // Affiche la 1ʳᵉ nouvelle unlock (si plusieurs : seules les autres
-      // s'afficheront sur les écrans suivants — bonne UX, pas de cascade).
-      final unlocked = statuses.firstWhere(
-        (s) => s.def.id == newlyEarned.first,
-      );
-      _showCelebration(unlocked.def);
+    // À chaque évolution de la file, on tente de célébrer le prochain.
+    ref.listen<List<String>>(pendingBadgeCelebrationsProvider, (_, _) {
+      _maybeCelebrateNext();
     });
 
     return Stack(
@@ -97,6 +82,31 @@ class _BadgeUnlockOverlayState extends ConsumerState<BadgeUnlockOverlay> {
         ),
       ],
     );
+  }
+
+  /// Pop la 1ʳᵉ entrée de la file et lance la célébration. No-op si la file
+  /// est vide ou si une célébration est déjà en cours.
+  void _maybeCelebrateNext() {
+    if (_showingDialog) return;
+    final pending = ref.read(pendingBadgeCelebrationsProvider);
+    if (pending.isEmpty) return;
+    final nextId = pending.first;
+    // Résout le BadgeDef depuis allBadges (la définition est en code, pas BDD).
+    final def = allBadges.cast<BadgeDef?>().firstWhere(
+          (d) => d!.id == nextId,
+          orElse: () => null,
+        );
+    if (def == null) {
+      // ID inconnu (badge supprimé du catalogue) → on nettoie la file.
+      _popPending(nextId);
+      return;
+    }
+    _showCelebration(def);
+  }
+
+  void _popPending(String id) {
+    final notifier = ref.read(pendingBadgeCelebrationsProvider.notifier);
+    notifier.state = notifier.state.where((x) => x != id).toList();
   }
 
   Future<void> _showCelebration(BadgeDef badge) async {
@@ -162,5 +172,9 @@ class _BadgeUnlockOverlayState extends ConsumerState<BadgeUnlockOverlay> {
       ),
     );
     _showingDialog = false;
+    // Retire le badge célébré de la file. Le listener va re-fire et
+    // _maybeCelebrateNext s'occupera du suivant si la file n'est pas vide.
+    if (!mounted) return;
+    _popPending(badge.id);
   }
 }

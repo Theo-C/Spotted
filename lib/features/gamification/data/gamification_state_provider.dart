@@ -1,4 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// StateProvider est sous legacy.dart en Riverpod 3 — équivalent simple
+// d'un StateNotifier sans classe dédiée. Pour la file de célébrations
+// c'est largement suffisant.
+import 'package:flutter_riverpod/legacy.dart';
 
 import '../../auth/data/auth_providers.dart';
 import '../../observations/data/observations_for_map_provider.dart';
@@ -25,9 +29,24 @@ final streakProvider = Provider<Streak>((ref) {
   return computeStreak(myObs.map((i) => i.obs).toList());
 });
 
+/// File d'attente des badges à célébrer côté UI. Alimentée par badgesProvider
+/// au moment de l'INSERT (auto-unlock), consommée par BadgeUnlockOverlay
+/// qui pop la 1ʳᵉ entrée et la célèbre. Reset à chaque restart d'app —
+/// pour le MVP on accepte qu'un badge gagné juste avant un crash ne soit
+/// pas re-célébré ; l'enregistrement BDD est persistant.
+///
+/// Pourquoi une file séparée plutôt qu'un diff côté UI : le diff fragile
+/// rate les célébrations quand la même run d'badgesProvider INSERT en BDD
+/// ET retourne (avec un earnedAt déjà null car lu avant l'INSERT) →
+/// l'overlay voyait earnedNow={} et ratait l'unlock. La file rend l'intention
+/// explicite : "ce badge vient d'être unlocked, célèbre-le".
+final pendingBadgeCelebrationsProvider =
+    StateProvider<List<String>>((_) => []);
+
 /// État des badges : pour chaque BadgeDef, sa progression et s'il est earned
 /// (présent en BDD user_badges). Auto-déclenche un INSERT en BDD pour les
-/// badges qui viennent d'atteindre 100% (effet de bord contrôlé).
+/// badges qui viennent d'atteindre 100% + pousse l'ID dans la file de
+/// célébrations.
 final badgesProvider = FutureProvider<List<BadgeStatus>>((ref) async {
   final myObs = ref.watch(_myObservationsProvider);
   final streak = ref.watch(streakProvider);
@@ -40,26 +59,45 @@ final badgesProvider = FutureProvider<List<BadgeStatus>>((ref) async {
   final earnedById = {for (final e in earnedList) e.badgeId: e};
 
   final ctx = BadgeContext(observations: myObs, streak: streak);
+  final newlyUnlockedIds = <String>[];
 
-  // Calcul de la progression pour chaque badge défini
+  // Calcul de la progression + auto-unlock pour chaque badge défini.
   final statuses = <BadgeStatus>[];
   for (final def in allBadges) {
     final progress = def.progressFn(ctx);
     final earned = earnedById[def.id];
+    DateTime? earnedAt = earned?.earnedAt;
+
+    // Auto-unlock : progression complète mais pas encore en BDD → INSERT,
+    // et on marque earnedAt en mémoire pour que cette même run renvoie un
+    // statut cohérent (avant ce fix, earnedAt restait null et l'overlay
+    // ratait la transition → célébration différée au prochain rebuild,
+    // souvent au mauvais moment).
+    if (earnedAt == null && progress.value >= 1.0) {
+      await repo.insertEarned(userId: userId, badgeId: def.id);
+      earnedAt = DateTime.now();
+      newlyUnlockedIds.add(def.id);
+    }
+
     statuses.add(BadgeStatus(
       def: def,
       progress: progress,
-      earnedAt: earned?.earnedAt,
+      earnedAt: earnedAt,
     ));
   }
 
-  // Détection auto des unlocks : tout badge complété (progress >= 1.0) qui
-  // n'est pas encore en BDD → on l'insère. La 1ʳᵉ insertion = trigger
-  // animation côté UI (cf. newlyEarnedBadgesProvider qui watch les diffs).
-  for (final s in statuses) {
-    if (s.isPendingUnlock) {
-      await repo.insertEarned(userId: userId, badgeId: s.def.id);
-    }
+  // Pousse les nouveaux unlocks dans la file de célébration via microtask
+  // pour ne pas muter d'autre state pendant la résolution du Future.
+  if (newlyUnlockedIds.isNotEmpty) {
+    Future.microtask(() {
+      final notifier = ref.read(pendingBadgeCelebrationsProvider.notifier);
+      final current = notifier.state;
+      final additions =
+          newlyUnlockedIds.where((id) => !current.contains(id)).toList();
+      if (additions.isNotEmpty) {
+        notifier.state = [...current, ...additions];
+      }
+    });
   }
 
   return statuses;
