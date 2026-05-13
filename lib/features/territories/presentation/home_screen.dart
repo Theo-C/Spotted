@@ -645,8 +645,10 @@ class _TagPill extends StatelessWidget {
   }
 }
 
-/// Hero card pour le terrain principal (DOMICILE) — gradient forestGreen,
-/// pastille XL, nom en Cormorant, barre de progression dorée + pourcentage.
+/// Hero card pour le terrain principal — fond crème + bordure forestGreen,
+/// style "page de carnet". Volontairement différent du _ProgressHeader (qui
+/// est un gradient sombre) pour ne pas faire confusion entre "ma progression"
+/// (gamification) et "mes terrains" (objet d'exploration).
 class _TerritoryHero extends StatelessWidget {
   const _TerritoryHero({required this.zone, required this.progressAsync});
 
@@ -667,17 +669,14 @@ class _TerritoryHero extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [forestGreen, forestGreenLight, forestGreen],
-              ),
+              color: surfaceCard,
               borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: forestGreen, width: 2),
               boxShadow: [
                 BoxShadow(
-                  color: forestGreen.withValues(alpha: 0.3),
-                  blurRadius: 20,
-                  offset: const Offset(0, 6),
+                  color: forestGreen.withValues(alpha: 0.15),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
                 ),
               ],
             ),
@@ -701,7 +700,7 @@ class _TerritoryHero extends StatelessWidget {
                   style: GoogleFonts.cormorantGaramond(
                     fontSize: 28,
                     fontWeight: FontWeight.w600,
-                    color: surfaceBase,
+                    color: forestGreen,
                     height: 1.0,
                   ),
                 ),
@@ -730,13 +729,13 @@ class _TerritoryHeroProgress extends StatelessWidget {
           child: SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2, color: goldLight),
+            child: CircularProgressIndicator(strokeWidth: 2, color: terracotta),
           ),
         ),
       ),
       error: (_, _) => Text(
         'Progression indisponible',
-        style: GoogleFonts.karla(color: surfaceBase, fontSize: 12),
+        style: GoogleFonts.karla(color: textMuted, fontSize: 12),
       ),
       data: (p) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -746,8 +745,8 @@ class _TerritoryHeroProgress extends StatelessWidget {
             child: LinearProgressIndicator(
               value: p.fraction,
               minHeight: 6,
-              backgroundColor: surfaceBase.withValues(alpha: 0.18),
-              valueColor: const AlwaysStoppedAnimation<Color>(goldLight),
+              backgroundColor: forestGreen.withValues(alpha: 0.12),
+              valueColor: const AlwaysStoppedAnimation<Color>(terracotta),
             ),
           ),
           const SizedBox(height: 8),
@@ -760,7 +759,7 @@ class _TerritoryHeroProgress extends StatelessWidget {
                 style: GoogleFonts.karla(
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
-                  color: surfaceBase,
+                  color: forestGreen,
                 ),
               ),
               const SizedBox(width: 6),
@@ -768,7 +767,7 @@ class _TerritoryHeroProgress extends StatelessWidget {
                 'sur ${p.total}',
                 style: GoogleFonts.karla(
                   fontSize: 11,
-                  color: const Color(0xFFC4A572),
+                  color: textSecondary,
                 ),
               ),
               const Spacer(),
@@ -777,7 +776,7 @@ class _TerritoryHeroProgress extends StatelessWidget {
                 style: GoogleFonts.karla(
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
-                  color: goldLight,
+                  color: terracotta,
                 ),
               ),
             ],
