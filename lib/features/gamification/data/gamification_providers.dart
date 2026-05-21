@@ -6,18 +6,33 @@ import '../domain/level.dart';
 
 /// Total des points cumulés par l'utilisateur connecté (Théo OU Axelle).
 /// Avec le passage à 2 comptes dissociés, chacun a sa propre progression.
+///
+/// Inclut :
+///   - les points gagnés sur les observations (observations.points_earned)
+///   - les XP des quêtes journalières claim (user_quest_claims.xp_credited)
 final accountTotalPointsProvider = FutureProvider<int>((ref) async {
   final userId = ref.watch(currentAuthUserProvider)?.id;
   if (userId == null) return 0;
   final client = ref.watch(supabaseClientProvider);
-  final rows = await client
-      .from('observations')
-      .select('points_earned')
-      .eq('user_id', userId);
-  return (rows as List).fold<int>(
+
+  // En parallèle pour gagner 1 round-trip
+  final results = await Future.wait([
+    client.from('observations').select('points_earned').eq('user_id', userId),
+    client
+        .from('user_quest_claims')
+        .select('xp_credited')
+        .eq('user_id', userId),
+  ]);
+
+  final obsPoints = (results[0] as List).fold<int>(
     0,
     (acc, e) => acc + ((e as Map<String, dynamic>)['points_earned'] as int),
   );
+  final questXp = (results[1] as List).fold<int>(
+    0,
+    (acc, e) => acc + ((e as Map<String, dynamic>)['xp_credited'] as int),
+  );
+  return obsPoints + questXp;
 });
 
 /// Niveau de l'utilisateur connecté (calculé depuis ses points cumulés).

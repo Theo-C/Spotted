@@ -9,6 +9,7 @@ import '../../observations/data/observations_for_map_provider.dart';
 import '../domain/badge.dart';
 import '../domain/quest.dart';
 import '../domain/streak.dart';
+import 'gamification_providers.dart';
 import 'user_badges_repository.dart';
 import 'user_quest_claims_repository.dart';
 
@@ -142,7 +143,11 @@ final questClaimerProvider =
           claimDate: today,
           xpCredited: quest.xpReward,
         );
+    // Rafraîchit les quêtes (l'item passe à claimed) ET le total points / level
+    // (sinon la barre XP de la home ne bouge pas — bug constaté 2026-05-15).
     ref.invalidate(dailyQuestsProvider);
+    ref.invalidate(accountTotalPointsProvider);
+    ref.invalidate(accountLevelProvider);
     return quest.xpReward;
   };
 });
