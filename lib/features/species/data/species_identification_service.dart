@@ -22,6 +22,29 @@ import '../domain/species_identification.dart';
 ///
 /// ⚠️ La clé API est embarquée dans l'APK (`.env` est asset Flutter). Pour un
 /// déploiement public, proxifier via une edge function Supabase.
+/// Snapshot du dernier appel d'identification IA — sert au diagnostic
+/// "pourquoi l'IA m'a sorti ce truc ?". Stocké en mémoire (perdu au restart),
+/// accessible via [lastAiCallProvider] et l'écran de debug du profil.
+class AiCallSnapshot {
+  const AiCallSnapshot({
+    required this.timestamp,
+    required this.model,
+    required this.userPrompt,
+    required this.rawResponse,
+    required this.parsed,
+    required this.durationMs,
+    this.error,
+  });
+
+  final DateTime timestamp;
+  final String model;
+  final String userPrompt;
+  final String rawResponse;
+  final SpeciesIdentification? parsed;
+  final int durationMs;
+  final String? error;
+}
+
 class SpeciesIdentificationService {
   SpeciesIdentificationService(this._dio);
 
@@ -29,6 +52,11 @@ class SpeciesIdentificationService {
 
   static const _model = 'claude-sonnet-4-6';
   static const _endpoint = 'https://api.anthropic.com/v1/messages';
+
+  /// Dernier appel effectué (succès OU erreur). Lu par l'écran de debug.
+  AiCallSnapshot? _lastCall;
+  AiCallSnapshot? get lastCall => _lastCall;
+  static const String systemPrompt = _systemPrompt;
 
   // Budget de raisonnement avant la réponse finale. 4000 tokens permettent à
   // Sonnet de dérouler intégralement la chaîne diagnostique (taille →
@@ -142,18 +170,30 @@ suivant EXACTEMENT ce schéma :
     String? regionName,
     String? country,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    final userText = _buildUserPrompt(
+      curatedSpecies: curatedSpecies,
+      place: place,
+      regionName: regionName,
+      country: country,
+    );
     try {
       final bytes = await _compressForVision(photo);
-      if (bytes == null) return null;
+      if (bytes == null) {
+        _lastCall = AiCallSnapshot(
+          timestamp: DateTime.now(),
+          model: _model,
+          userPrompt: userText,
+          rawResponse: '',
+          parsed: null,
+          durationMs: stopwatch.elapsedMilliseconds,
+          error: 'Compression image échouée',
+        );
+        return null;
+      }
       final encoded = base64Encode(bytes);
       // Après compression on est toujours en JPEG (cf. _compressForVision).
       const mediaType = 'image/jpeg';
-      final userText = _buildUserPrompt(
-        curatedSpecies: curatedSpecies,
-        place: place,
-        regionName: regionName,
-        country: country,
-      );
 
       final response = await _dio.post<Map<String, dynamic>>(
         _endpoint,
@@ -211,33 +251,68 @@ suivant EXACTEMENT ce schéma :
       );
 
       final content = response.data?['content'] as List?;
-      if (content == null || content.isEmpty) return null;
-      final textBlock = content.firstWhere(
+      final textBlock = content?.firstWhere(
         (c) => (c as Map<String, dynamic>)['type'] == 'text',
         orElse: () => null,
-      );
-      if (textBlock == null) return null;
-      final text = (textBlock as Map<String, dynamic>)['text'] as String?;
-      if (text == null) return null;
+      ) as Map<String, dynamic>?;
+      final text = (textBlock?['text'] as String?) ?? '';
 
-      final json = _extractJson(text);
-      if (json == null) {
-        developer.log(
-          'Could not parse JSON from Claude response: $text',
-          name: 'species_id',
-        );
-        return null;
+      SpeciesIdentification? parsed;
+      String? error;
+      if (text.isEmpty) {
+        error = 'Réponse vide (pas de block texte)';
+      } else {
+        final json = _extractJson(text);
+        if (json == null) {
+          error = 'JSON non parsable depuis la réponse';
+          developer.log(
+            'Could not parse JSON from Claude response: $text',
+            name: 'species_id',
+          );
+        } else {
+          try {
+            parsed = SpeciesIdentification.fromJson(json);
+          } catch (e) {
+            error = 'Schéma JSON inattendu : $e';
+          }
+        }
       }
-      return SpeciesIdentification.fromJson(json);
+      _lastCall = AiCallSnapshot(
+        timestamp: DateTime.now(),
+        model: _model,
+        userPrompt: userText,
+        rawResponse: text,
+        parsed: parsed,
+        durationMs: stopwatch.elapsedMilliseconds,
+        error: error,
+      );
+      return parsed;
     } on DioException catch (e) {
-      developer.log(
-        'Dio error during identification: ${e.message} (${e.response?.statusCode})',
-        name: 'species_id',
+      final msg =
+          'Dio error : ${e.message} (HTTP ${e.response?.statusCode}) ${e.response?.data}';
+      developer.log(msg, name: 'species_id');
+      _lastCall = AiCallSnapshot(
+        timestamp: DateTime.now(),
+        model: _model,
+        userPrompt: userText,
+        rawResponse: e.response?.data?.toString() ?? '',
+        parsed: null,
+        durationMs: stopwatch.elapsedMilliseconds,
+        error: msg,
       );
       return null;
     } catch (e) {
       developer.log('Unexpected error during identification: $e',
           name: 'species_id');
+      _lastCall = AiCallSnapshot(
+        timestamp: DateTime.now(),
+        model: _model,
+        userPrompt: userText,
+        rawResponse: '',
+        parsed: null,
+        durationMs: stopwatch.elapsedMilliseconds,
+        error: 'Erreur inattendue : $e',
+      );
       return null;
     }
   }
@@ -332,4 +407,11 @@ suivant EXACTEMENT ce schéma :
 final speciesIdentificationServiceProvider =
     Provider<SpeciesIdentificationService>((ref) {
   return SpeciesIdentificationService(Dio());
+});
+
+/// Provider du dernier snapshot d'appel IA. Re-évalué à chaque rebuild
+/// — l'écran de debug du profil l'utilise pour afficher prompt + réponse.
+/// Renvoie null tant qu'aucun appel n'a été fait pendant cette session.
+final lastAiCallProvider = Provider<AiCallSnapshot?>((ref) {
+  return ref.watch(speciesIdentificationServiceProvider).lastCall;
 });

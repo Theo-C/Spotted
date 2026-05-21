@@ -75,6 +75,11 @@ class ProfileScreen extends ConsumerWidget {
               const SizedBox(height: 4),
               const _StreakNotifsTile(),
               _SettingsTile(
+                icon: Icons.bug_report_outlined,
+                label: 'Diagnostic IA',
+                onTap: () => context.push('/ai-debug'),
+              ),
+              _SettingsTile(
                 icon: Icons.logout,
                 label: 'Se déconnecter',
                 color: const Color(0xFFB8624A),

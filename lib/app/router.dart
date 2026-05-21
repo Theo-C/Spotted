@@ -9,6 +9,7 @@ import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/gamification/presentation/badges_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
+import '../features/species/presentation/ai_debug_screen.dart';
 import '../features/observations/presentation/new_observation_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
@@ -79,6 +80,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/badges',
         builder: (_, _) => const BadgesScreen(),
+      ),
+      GoRoute(
+        path: '/ai-debug',
+        builder: (_, _) => const AiDebugScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
