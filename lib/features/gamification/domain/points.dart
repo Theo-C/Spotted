@@ -21,21 +21,29 @@ int withPhotoBonus(int basePoints) =>
 
 /// Combo helper — points crédités pour une obs donnée.
 ///
-/// [streakMultiplier] : bonus série courante (1.0 = pas de bonus, 1.5 = +50%).
-/// Appliqué EN DERNIER, après les bonus rareté et photo, pour que le bonus
-/// série amplifie tout le reste (cf. CLAUDE.md §règles métier).
+/// Ordre d'application des multiplicateurs (empilement du "plus intrinsèque"
+/// au "plus contextuel") :
+///   1. Base rareté (1ʳᵉ ou re-obs)
+///   2. Bonus photo (+50%) — si photo jointe
+///   3. Bonus espèce du jour (x2) — si obs de l'espèce tirée pour aujourd'hui
+///   4. Multiplicateur série ([streakMultiplier]) — amplifie tout le reste
+///
+/// [isDailySpecies] : true si l'espèce observée est celle tirée pour l'user
+/// pour aujourd'hui (cf. daily_species). Applique un x2 sur les points.
 int observationPoints({
   required Rarity rarity,
   required bool isFirst,
   required bool hasPhoto,
+  bool isDailySpecies = false,
   double streakMultiplier = 1.0,
 }) {
   final base = isFirst
       ? firstObservationPoints(rarity)
       : reobservationPoints(rarity);
   final withPhoto = hasPhoto ? withPhotoBonus(base) : base;
-  if (streakMultiplier == 1.0) return withPhoto;
-  return (withPhoto * streakMultiplier).round();
+  final withDaily = isDailySpecies ? withPhoto * 2 : withPhoto;
+  if (streakMultiplier == 1.0) return withDaily;
+  return (withDaily * streakMultiplier).round();
 }
 
 /// Bonus rétroactif si on ajoute une photo à une 1ʳᵉ obs déjà validée

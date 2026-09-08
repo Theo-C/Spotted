@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$AppUser {
 
- String get id; String get pseudo; String get colorAccent; DateTime get createdAt;
+ String get id; String get pseudo; String get colorAccent; DateTime get createdAt; bool get isAdmin; bool get profileCompleted;
 /// Create a copy of AppUser
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $AppUserCopyWith<AppUser> get copyWith => _$AppUserCopyWithImpl<AppUser>(this as
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is AppUser&&(identical(other.id, id) || other.id == id)&&(identical(other.pseudo, pseudo) || other.pseudo == pseudo)&&(identical(other.colorAccent, colorAccent) || other.colorAccent == colorAccent)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AppUser&&(identical(other.id, id) || other.id == id)&&(identical(other.pseudo, pseudo) || other.pseudo == pseudo)&&(identical(other.colorAccent, colorAccent) || other.colorAccent == colorAccent)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.isAdmin, isAdmin) || other.isAdmin == isAdmin)&&(identical(other.profileCompleted, profileCompleted) || other.profileCompleted == profileCompleted));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,pseudo,colorAccent,createdAt);
+int get hashCode => Object.hash(runtimeType,id,pseudo,colorAccent,createdAt,isAdmin,profileCompleted);
 
 @override
 String toString() {
-  return 'AppUser(id: $id, pseudo: $pseudo, colorAccent: $colorAccent, createdAt: $createdAt)';
+  return 'AppUser(id: $id, pseudo: $pseudo, colorAccent: $colorAccent, createdAt: $createdAt, isAdmin: $isAdmin, profileCompleted: $profileCompleted)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $AppUserCopyWith<$Res>  {
   factory $AppUserCopyWith(AppUser value, $Res Function(AppUser) _then) = _$AppUserCopyWithImpl;
 @useResult
 $Res call({
- String id, String pseudo, String colorAccent, DateTime createdAt
+ String id, String pseudo, String colorAccent, DateTime createdAt, bool isAdmin, bool profileCompleted
 });
 
 
@@ -65,13 +65,15 @@ class _$AppUserCopyWithImpl<$Res>
 
 /// Create a copy of AppUser
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? pseudo = null,Object? colorAccent = null,Object? createdAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? pseudo = null,Object? colorAccent = null,Object? createdAt = null,Object? isAdmin = null,Object? profileCompleted = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,pseudo: null == pseudo ? _self.pseudo : pseudo // ignore: cast_nullable_to_non_nullable
 as String,colorAccent: null == colorAccent ? _self.colorAccent : colorAccent // ignore: cast_nullable_to_non_nullable
 as String,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as DateTime,
+as DateTime,isAdmin: null == isAdmin ? _self.isAdmin : isAdmin // ignore: cast_nullable_to_non_nullable
+as bool,profileCompleted: null == profileCompleted ? _self.profileCompleted : profileCompleted // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 
@@ -156,10 +158,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String pseudo,  String colorAccent,  DateTime createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String pseudo,  String colorAccent,  DateTime createdAt,  bool isAdmin,  bool profileCompleted)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _AppUser() when $default != null:
-return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt);case _:
+return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt,_that.isAdmin,_that.profileCompleted);case _:
   return orElse();
 
 }
@@ -177,10 +179,10 @@ return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String pseudo,  String colorAccent,  DateTime createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String pseudo,  String colorAccent,  DateTime createdAt,  bool isAdmin,  bool profileCompleted)  $default,) {final _that = this;
 switch (_that) {
 case _AppUser():
-return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt);case _:
+return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt,_that.isAdmin,_that.profileCompleted);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -197,10 +199,10 @@ return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String pseudo,  String colorAccent,  DateTime createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String pseudo,  String colorAccent,  DateTime createdAt,  bool isAdmin,  bool profileCompleted)?  $default,) {final _that = this;
 switch (_that) {
 case _AppUser() when $default != null:
-return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt);case _:
+return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt,_that.isAdmin,_that.profileCompleted);case _:
   return null;
 
 }
@@ -212,13 +214,15 @@ return $default(_that.id,_that.pseudo,_that.colorAccent,_that.createdAt);case _:
 @JsonSerializable()
 
 class _AppUser implements AppUser {
-  const _AppUser({required this.id, required this.pseudo, required this.colorAccent, required this.createdAt});
+  const _AppUser({required this.id, required this.pseudo, required this.colorAccent, required this.createdAt, this.isAdmin = false, this.profileCompleted = false});
   factory _AppUser.fromJson(Map<String, dynamic> json) => _$AppUserFromJson(json);
 
 @override final  String id;
 @override final  String pseudo;
 @override final  String colorAccent;
 @override final  DateTime createdAt;
+@override@JsonKey() final  bool isAdmin;
+@override@JsonKey() final  bool profileCompleted;
 
 /// Create a copy of AppUser
 /// with the given fields replaced by the non-null parameter values.
@@ -233,16 +237,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AppUser&&(identical(other.id, id) || other.id == id)&&(identical(other.pseudo, pseudo) || other.pseudo == pseudo)&&(identical(other.colorAccent, colorAccent) || other.colorAccent == colorAccent)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AppUser&&(identical(other.id, id) || other.id == id)&&(identical(other.pseudo, pseudo) || other.pseudo == pseudo)&&(identical(other.colorAccent, colorAccent) || other.colorAccent == colorAccent)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.isAdmin, isAdmin) || other.isAdmin == isAdmin)&&(identical(other.profileCompleted, profileCompleted) || other.profileCompleted == profileCompleted));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,pseudo,colorAccent,createdAt);
+int get hashCode => Object.hash(runtimeType,id,pseudo,colorAccent,createdAt,isAdmin,profileCompleted);
 
 @override
 String toString() {
-  return 'AppUser(id: $id, pseudo: $pseudo, colorAccent: $colorAccent, createdAt: $createdAt)';
+  return 'AppUser(id: $id, pseudo: $pseudo, colorAccent: $colorAccent, createdAt: $createdAt, isAdmin: $isAdmin, profileCompleted: $profileCompleted)';
 }
 
 
@@ -253,7 +257,7 @@ abstract mixin class _$AppUserCopyWith<$Res> implements $AppUserCopyWith<$Res> {
   factory _$AppUserCopyWith(_AppUser value, $Res Function(_AppUser) _then) = __$AppUserCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String pseudo, String colorAccent, DateTime createdAt
+ String id, String pseudo, String colorAccent, DateTime createdAt, bool isAdmin, bool profileCompleted
 });
 
 
@@ -270,13 +274,15 @@ class __$AppUserCopyWithImpl<$Res>
 
 /// Create a copy of AppUser
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? pseudo = null,Object? colorAccent = null,Object? createdAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? pseudo = null,Object? colorAccent = null,Object? createdAt = null,Object? isAdmin = null,Object? profileCompleted = null,}) {
   return _then(_AppUser(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,pseudo: null == pseudo ? _self.pseudo : pseudo // ignore: cast_nullable_to_non_nullable
 as String,colorAccent: null == colorAccent ? _self.colorAccent : colorAccent // ignore: cast_nullable_to_non_nullable
 as String,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as DateTime,
+as DateTime,isAdmin: null == isAdmin ? _self.isAdmin : isAdmin // ignore: cast_nullable_to_non_nullable
+as bool,profileCompleted: null == profileCompleted ? _self.profileCompleted : profileCompleted // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 

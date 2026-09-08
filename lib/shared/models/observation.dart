@@ -18,6 +18,7 @@ abstract class Observation with _$Observation {
     required bool isFirstForUser,
     required int pointsEarned,
     required DateTime createdAt,
+    @Default(false) bool wasDailySpecies,
   }) = _Observation;
 
   factory Observation.fromJson(Map<String, dynamic> json) =>

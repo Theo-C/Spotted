@@ -13,9 +13,9 @@ import 'gamification_providers.dart';
 import 'user_badges_repository.dart';
 import 'user_quest_claims_repository.dart';
 
-/// Observations du user authentifié uniquement (filtre côté client depuis
-/// allObservationsForMapProvider qui est partagé). Source de vérité pour
-/// série, badges, quêtes.
+/// Observations du user authentifié uniquement. La RLS 0023 filtre déjà
+/// côté serveur ; on garde le filtre client en defense-in-depth. Source de
+/// vérité pour série, badges, quêtes.
 final _myObservationsProvider =
     Provider<List<ObservationOnMap>>((ref) {
   final all = ref.watch(allObservationsForMapProvider).asData?.value ?? const [];

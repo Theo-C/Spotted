@@ -49,10 +49,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _finish() async {
     await ref.read(onboardingServiceProvider).markComplete();
-    // Le router refresh va rediriger vers / automatiquement. Mais on push
-    // explicitement au cas où le router prend une frame à se synchroniser.
+    // Le router refresh va rediriger vers / automatiquement une fois
+    // l'onboarding marqué comme complet. On remplace explicitement par le
+    // tuto : le nouvel user enchaîne perms → tuto → Home sans étape
+    // supplémentaire à taper. Le tuto pop lui-même vers Home en sortant
+    // (context.canPop() est false depuis /tuto atteint via go, donc il
+    // fera context.go('/') — cf. TutoScreen._finish).
     if (!mounted) return;
-    context.go('/');
+    context.go('/tuto');
   }
 
   Future<void> _enableNotifs() async {

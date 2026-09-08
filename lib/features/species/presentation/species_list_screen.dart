@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +10,7 @@ import '../../../shared/models/category.dart';
 import '../../../shared/models/rarity.dart';
 import '../../observations/data/observed_species_provider.dart';
 import '../../territories/data/category_repository.dart';
+import '../../territories/data/zone_repository.dart';
 import '../data/species_with_rarity_provider.dart';
 
 enum _StatusFilter { all, observed, mystery }
@@ -61,6 +63,7 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
   @override
   Widget build(BuildContext context) {
     final categoryAsync = ref.watch(_categoryByIdProvider(widget.categoryId));
+    final zoneAsync = ref.watch(_zoneByIdProvider(widget.zoneId));
     final speciesAsync = ref.watch(
       speciesByCategoryInZoneProvider(
         (zoneId: widget.zoneId, categoryId: widget.categoryId),
@@ -83,7 +86,7 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
                     onPressed: () => context.pop(),
                     icon: const Icon(Icons.chevron_left, color: forestGreen),
                     label: Text(
-                      'Oise',
+                      zoneAsync.asData?.value.name ?? '',
                       style: GoogleFonts.karla(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -275,6 +278,13 @@ class _SpeciesListScreenState extends ConsumerState<SpeciesListScreen> {
 final _categoryByIdProvider = FutureProvider.family((ref, String id) async {
   final categories = await ref.watch(categoryRepositoryProvider).getAll();
   return categories.firstWhere((c) => c.id == id);
+});
+
+/// Provider local — résout une Zone par son UUID (miroir de celui de
+/// TerritoryScreen). Sert à afficher le nom de zone dans le fil d'Ariane
+/// (auparavant hard-codé "Oise", cassé dès qu'on est sur un autre département).
+final _zoneByIdProvider = FutureProvider.family((ref, String id) async {
+  return ref.watch(zoneRepositoryProvider).getById(id);
 });
 
 class _CategoryHeader extends StatelessWidget {
@@ -636,15 +646,16 @@ class _SpeciesThumbnail extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: showPhoto
-          ? Image.network(
-              photoUrl!,
+          ? CachedNetworkImage(
+              imageUrl: photoUrl!,
               fit: BoxFit.cover,
-              // Pendant le chargement on garde l'emoji visible — évite le
-              // "flash blanc" sur connexions lentes.
-              loadingBuilder: (_, child, progress) =>
-                  progress == null ? child : emojiFallback,
-              // Photo cassée / 404 / hors réseau → emoji.
-              errorBuilder: (_, _, _) => emojiFallback,
+              // Miniature 56×56 → cap à 200px en mémoire (couvre les écrans
+              // 3x DPR sans stocker la full-res qui plombe le scroll).
+              memCacheWidth: 200,
+              // Emoji visible pendant le 1er chargement (avant cache) et
+              // en cas d'erreur — évite le flash blanc.
+              placeholder: (_, _) => emojiFallback,
+              errorWidget: (_, _, _) => emojiFallback,
             )
           : emojiFallback,
     );

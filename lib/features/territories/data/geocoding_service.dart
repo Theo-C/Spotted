@@ -28,6 +28,26 @@ class GeocodingResult {
   }
 }
 
+/// Suggestion de forward-geocoding (recherche de lieu → coordonnées).
+/// Utilisé par le champ "chercher une ville" du form d'obs.
+class PlaceSuggestion {
+  const PlaceSuggestion({
+    required this.name,
+    required this.description,
+    required this.lat,
+    required this.lng,
+  });
+
+  /// Nom court (ex: "Compiègne").
+  final String name;
+
+  /// Contexte : département, région, pays (ex: "Oise, Hauts-de-France, France").
+  final String description;
+
+  final double lat;
+  final double lng;
+}
+
 class GeocodingService {
   GeocodingService(this._dio);
 
@@ -83,6 +103,60 @@ class GeocodingService {
     } catch (e) {
       debugPrint('[geocoding] parse error: $e');
       return null;
+    }
+  }
+
+  /// Forward-geocode : "Compiègne" → suggestions avec coordonnées.
+  /// On limite le type aux entités humaines pertinentes (place / locality /
+  /// district / region / country) pour éviter les POIs / adresses qui polluent
+  /// quand on veut juste positionner à l'échelle d'une ville.
+  ///
+  /// Retourne une liste vide en cas d'erreur réseau ou de query < 2 chars.
+  Future<List<PlaceSuggestion>> forwardGeocode(
+    String query, {
+    int limit = 5,
+  }) async {
+    final q = query.trim();
+    if (q.length < 2) return const [];
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        'https://api.mapbox.com/search/geocode/v6/forward',
+        queryParameters: {
+          'q': q,
+          'access_token': Env.mapboxAccessToken,
+          'language': 'fr',
+          'limit': limit,
+          'types': 'place,locality,district,region,country',
+        },
+      );
+      final features = response.data?['features'] as List?;
+      if (features == null || features.isEmpty) return const [];
+      final results = <PlaceSuggestion>[];
+      for (final feature in features) {
+        final f = feature as Map<String, dynamic>;
+        final props = f['properties'] as Map<String, dynamic>?;
+        final geometry = f['geometry'] as Map<String, dynamic>?;
+        final coords = geometry?['coordinates'] as List?;
+        if (props == null || coords == null || coords.length < 2) continue;
+        final name = props['name'] as String? ?? '';
+        if (name.isEmpty) continue;
+        final placeFormatted = props['place_formatted'] as String? ?? '';
+        results.add(PlaceSuggestion(
+          name: name,
+          description: placeFormatted,
+          lng: (coords[0] as num).toDouble(),
+          lat: (coords[1] as num).toDouble(),
+        ));
+      }
+      return results;
+    } on DioException catch (e) {
+      debugPrint(
+        '[geocoding-forward] network error: ${e.message} (status=${e.response?.statusCode})',
+      );
+      return const [];
+    } catch (e) {
+      debugPrint('[geocoding-forward] parse error: $e');
+      return const [];
     }
   }
 }

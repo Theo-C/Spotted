@@ -1,15 +1,19 @@
 import 'dart:ui' show ImageFilter;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/utils/category_icons.dart';
+import '../../../core/utils/date_formatter.dart';
+import '../../../core/widgets/async_state_widgets.dart';
+import '../../../core/widgets/fullscreen_photo_viewer.dart';
 import '../../../shared/models/rarity.dart';
 import '../../auth/data/auth_providers.dart';
+import '../../gamification/data/daily_species_provider.dart';
 import '../../gamification/domain/points.dart';
 import '../../observations/data/observations_for_map_provider.dart';
 import '../../observations/data/observed_species_provider.dart';
@@ -41,18 +45,8 @@ class SpeciesDetailScreen extends ConsumerWidget {
 
     return Scaffold(
       body: detailAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        error: (e, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(40),
-            child: Text(
-              'Espèce introuvable',
-              style: GoogleFonts.karla(color: textMuted),
-            ),
-          ),
-        ),
+        loading: () => const LoadingState(height: 300),
+        error: (e, _) => const ErrorState(message: 'Espèce introuvable.'),
         data: (detail) {
           final isObserved =
               observedIdsAsync.asData?.value.contains(speciesId) ?? false;
@@ -139,7 +133,15 @@ class _DetailBody extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _StatsRow(rarity: detail.rarity, isObserved: isObserved),
+                _StatsRow(
+                  speciesId: detail.species.id,
+                  rarity: detail.rarity,
+                  isObserved: isObserved,
+                ),
+                // Rappel "espèce du jour" — visible seulement si l'espèce
+                // courante est celle du tirage du jour pour l'user. Masqué
+                // silencieusement sinon (SizedBox.shrink en interne).
+                _DailySpeciesReminder(speciesId: detail.species.id),
                 const SizedBox(height: 20),
                 Text(
                   isObserved ? 'DESCRIPTION' : 'FICHE GUIDE DE TERRAIN',
@@ -195,7 +197,76 @@ final _categoryByIdProvider = FutureProvider.family((ref, String id) async {
   return categories.firstWhere((c) => c.id == id);
 });
 
-class _Hero extends StatelessWidget {
+/// Rappel discret "cette espèce = celle du jour" sur la fiche détail.
+/// Deux états visuels miroir du bandeau Home (gold "à débusquer" / green
+/// "validée") — cohérence de langage entre les deux endroits où le user voit
+/// la mention. Prend zéro place quand l'espèce n'est pas celle du jour.
+class _DailySpeciesReminder extends ConsumerWidget {
+  const _DailySpeciesReminder({required this.speciesId});
+
+  final String speciesId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isDaily = ref.watch(isDailySpeciesProvider(speciesId));
+    if (!isDaily) return const SizedBox.shrink();
+
+    final userId = ref.watch(currentAuthUserProvider)?.id;
+    final all =
+        ref.watch(allObservationsForMapProvider).asData?.value ?? const [];
+    final now = DateTime.now().toLocal();
+    final observedToday = userId != null &&
+        all.any((i) {
+          if (i.obs.userId != userId) return false;
+          if (i.obs.speciesId != speciesId) return false;
+          final d = i.obs.observedAt.toLocal();
+          return d.year == now.year &&
+              d.month == now.month &&
+              d.day == now.day;
+        });
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: observedToday
+                ? [forestGreen, forestGreenLight]
+                : [gold, goldLight],
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              observedToday ? Icons.check_circle : Icons.stars_outlined,
+              size: 18,
+              color: surfaceBase,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                observedToday
+                    ? 'Espèce du jour — validée !'
+                    : "Espèce du jour — bonus ×2 si observée aujourd'hui",
+                style: GoogleFonts.karla(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: surfaceBase,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Hero extends ConsumerWidget {
   const _Hero({
     required this.rarity,
     required this.iconKey,
@@ -214,7 +285,8 @@ class _Hero extends StatelessWidget {
   final String? photoUrl;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isAdmin = ref.watch(isAdminProvider);
     final color = _rarityColor(rarity);
     final hasPhoto = photoUrl != null;
     return SizedBox(
@@ -241,10 +313,12 @@ class _Hero extends StatelessWidget {
             Positioned.fill(
               child: ImageFiltered(
                 imageFilter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                child: Image.network(
-                  photoUrl!,
+                child: CachedNetworkImage(
+                  imageUrl: photoUrl!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  // Pas de placeholder ici : le gradient rareté (Positioned.fill
+                  // au-dessous) sert déjà de fond avant chargement.
+                  errorWidget: (_, _, _) => const SizedBox.shrink(),
                 ),
               ),
             ),
@@ -259,12 +333,18 @@ class _Hero extends StatelessWidget {
                 ),
               ),
             // Foreground : photo nette en contain, animal toujours visible
-            // dans son entier, recadrage non destructif.
+            // dans son entier, recadrage non destructif. Tap → fullscreen
+            // zoomable (pareil que sur les photos d'obs). Les boutons back
+            // / edit / pill "À DÉBUSQUER" sont ajoutés APRÈS dans le Stack,
+            // donc ils interceptent les taps sur leur zone en priorité.
             Positioned.fill(
-              child: Image.network(
-                photoUrl!,
-                fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              child: GestureDetector(
+                onTap: () => openFullscreenPhoto(context, photoUrl!),
+                child: CachedNetworkImage(
+                  imageUrl: photoUrl!,
+                  fit: BoxFit.contain,
+                  errorWidget: (_, _, _) => const SizedBox.shrink(),
+                ),
               ),
             ),
           ] else
@@ -290,23 +370,20 @@ class _Hero extends StatelessWidget {
               ),
             ),
           ),
-          // Rarity badge + edit button
-          Positioned(
-            top: 16,
-            right: 16,
-            child: SafeArea(
-              child: Row(
-                children: [
-                  _CircleButton(
-                    icon: Icons.edit_outlined,
-                    onTap: () => context.push('/species/$speciesId/edit'),
-                  ),
-                  const SizedBox(width: 8),
-                  _RarityBadge(rarity: rarity),
-                ],
+          // Bouton d'édition — admin only. Le badge de rareté a été retiré
+          // du hero : il est déjà rendu par _RarityStars juste en dessous,
+          // et sa présence ici surchargeait visuellement la photo.
+          if (isAdmin)
+            Positioned(
+              top: 16,
+              right: 16,
+              child: SafeArea(
+                child: _CircleButton(
+                  icon: Icons.edit_outlined,
+                  onTap: () => context.push('/species/$speciesId/edit'),
+                ),
               ),
             ),
-          ),
           // "À débusquer"
           if (!isObserved)
             Positioned(
@@ -363,47 +440,6 @@ class _CircleButton extends StatelessWidget {
   }
 }
 
-class _RarityBadge extends StatelessWidget {
-  const _RarityBadge({required this.rarity});
-
-  final Rarity rarity;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _rarityColor(rarity);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: surfaceBase,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.3),
-            blurRadius: 8,
-          ),
-        ],
-      ),
-      child: Text(
-        _label(rarity).toUpperCase(),
-        style: GoogleFonts.karla(
-          fontSize: 11,
-          letterSpacing: 1.5,
-          fontWeight: FontWeight.bold,
-          color: color,
-        ),
-      ),
-    );
-  }
-
-  static String _label(Rarity r) => switch (r) {
-        Rarity.common => 'Commun',
-        Rarity.rare => 'Rare',
-        Rarity.epic => 'Épique',
-        Rarity.legendary => 'Légendaire',
-      };
-}
-
 class _RarityStars extends StatelessWidget {
   const _RarityStars({required this.rarity});
 
@@ -429,41 +465,76 @@ class _RarityStars extends StatelessWidget {
   }
 }
 
-class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.rarity, required this.isObserved});
+/// Rangée de 3 "trophées" de la fiche espèce. Chaque tile a sa propre couleur
+/// d'accent quand débloqué (évite le mur de vert si les 3 sont cochés) :
+///   - Vue (forestGreen) : au moins 1 obs de l'user pour cette espèce
+///   - Photo (terracotta) : au moins 1 obs AVEC photo
+///   - Points (gold) : compteur cumulé des points obtenus sur cette espèce
+///
+/// Locked / unlocked partagent le même layout — seul le style (border, icon,
+/// text color, subtle bg tint) change → pas de saut visuel au unlock.
+class _StatsRow extends ConsumerWidget {
+  const _StatsRow({
+    required this.speciesId,
+    required this.rarity,
+    required this.isObserved,
+  });
 
+  final String speciesId;
   final Rarity rarity;
   final bool isObserved;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userId = ref.watch(currentAuthUserProvider)?.id;
+    final all =
+        ref.watch(allObservationsForMapProvider).asData?.value ?? const [];
+    final myObs = userId == null
+        ? const <ObservationOnMap>[]
+        : all
+            .where((i) =>
+                i.obs.userId == userId && i.obs.speciesId == speciesId)
+            .toList();
+    final hasPhoto = myObs.any((i) => i.obs.photoUrl != null);
+    final cumulatedPoints =
+        myObs.fold<int>(0, (acc, i) => acc + i.obs.pointsEarned);
+
     return Row(
       children: [
         Expanded(
           child: _StatTile(
-            icon: Icons.auto_awesome,
-            iconColor: gold,
-            label: 'Points',
-            value: '+${firstObservationPoints(rarity)}',
+            icon: Icons.visibility_outlined,
+            accent: forestGreen,
+            label: 'Vue',
+            valueUnlocked: '✓',
+            valueLocked: '—',
+            unlocked: isObserved,
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: _StatTile(
             icon: Icons.camera_alt_outlined,
-            iconColor: terracotta,
-            label: 'Bonus photo',
-            value: '+50%',
+            accent: terracotta,
+            label: 'Photo',
+            valueUnlocked: '✓',
+            // Barème visible tant que pas débloqué — objectif "ajoute une
+            // photo pour empocher le bonus +50%".
+            valueLocked: '+50%',
+            unlocked: hasPhoto,
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: _StatTile(
-            icon: Icons.visibility_outlined,
-            iconColor: isObserved ? goldLight : textSecondary,
-            label: 'Statut',
-            value: isObserved ? 'Vue ✓' : '—',
-            highlighted: isObserved,
+            icon: Icons.auto_awesome,
+            accent: gold,
+            label: 'Points',
+            valueUnlocked: '+$cumulatedPoints',
+            // Aucun point encore obtenu → montre le barème de la 1ʳᵉ obs
+            // pour se projeter sur le potentiel.
+            valueLocked: '+${firstObservationPoints(rarity)}',
+            unlocked: cumulatedPoints > 0,
           ),
         ),
       ],
@@ -471,32 +542,37 @@ class _StatsRow extends StatelessWidget {
   }
 }
 
+/// Tile trophée : bordure + icône + texte dans l'accent quand [unlocked],
+/// gris/beige sinon. Tint de fond très léger (8% alpha) pour la version
+/// unlocked — assez pour signaler l'état sans faire "bouton coloré plein".
 class _StatTile extends StatelessWidget {
   const _StatTile({
     required this.icon,
-    required this.iconColor,
+    required this.accent,
     required this.label,
-    required this.value,
-    this.highlighted = false,
+    required this.valueUnlocked,
+    required this.valueLocked,
+    required this.unlocked,
   });
 
   final IconData icon;
-  final Color iconColor;
+  final Color accent;
   final String label;
-  final String value;
-  final bool highlighted;
+  final String valueUnlocked;
+  final String valueLocked;
+  final bool unlocked;
 
   @override
   Widget build(BuildContext context) {
+    final borderColor = unlocked ? accent : const Color(0xFFE8E0CE);
+    final iconColor = unlocked ? accent : textMuted;
+    final valueColor = unlocked ? accent : textSecondary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
       decoration: BoxDecoration(
-        color: highlighted ? forestGreen : surfaceCard,
+        color: unlocked ? accent.withValues(alpha: 0.08) : surfaceCard,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: highlighted ? forestGreen : const Color(0xFFE8E0CE),
-          width: 2,
-        ),
+        border: Border.all(color: borderColor, width: 2),
       ),
       child: Column(
         children: [
@@ -508,18 +584,16 @@ class _StatTile extends StatelessWidget {
               fontSize: 9,
               letterSpacing: 1.2,
               fontWeight: FontWeight.bold,
-              color: highlighted
-                  ? const Color(0xFFC4A572)
-                  : textSecondary,
+              color: unlocked ? accent : textSecondary,
             ),
           ),
           const SizedBox(height: 2),
           Text(
-            value,
+            unlocked ? valueUnlocked : valueLocked,
             style: GoogleFonts.cormorantGaramond(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: highlighted ? surfaceBase : forestGreen,
+              color: valueColor,
             ),
           ),
         ],
@@ -750,10 +824,17 @@ class _MyObservationCard extends ConsumerWidget {
               width: 44,
               height: 44,
               child: hasPhoto
-                  ? Image.network(
-                      item.obs.photoUrl!,
+                  ? CachedNetworkImage(
+                      imageUrl: item.obs.photoUrl!,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => _ThumbFallback(
+                      // Miniature 44×44 — on limite la taille en mémoire.
+                      // (44 × 3 DPR max sur les écrans très denses = 132.)
+                      memCacheWidth: 150,
+                      placeholder: (_, _) => _ThumbFallback(
+                        isFirst: isFirst,
+                        icon: Icons.location_on,
+                      ),
+                      errorWidget: (_, _, _) => _ThumbFallback(
                         isFirst: isFirst,
                         icon: Icons.broken_image_outlined,
                       ),
@@ -792,10 +873,19 @@ class _MyObservationCard extends ConsumerWidget {
                       ),
                       const SizedBox(width: 6),
                     ],
+                    // Étoile discrète si l'obs a validé le défi du jour.
+                    // Couleur inversée selon fond (1ʳᵉ = fond forestGreen).
+                    if (item.obs.wasDailySpecies) ...[
+                      Icon(
+                        Icons.stars,
+                        size: 13,
+                        color: isFirst ? goldLight : gold,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
                     Flexible(
                       child: Text(
-                        DateFormat('d MMM yyyy', 'fr')
-                            .format(item.obs.observedAt),
+                        DateFormatter.full(item.obs.observedAt),
                         style: GoogleFonts.cormorantGaramond(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,

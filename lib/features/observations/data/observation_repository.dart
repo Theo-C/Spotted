@@ -9,7 +9,7 @@ class ObservationRepository {
 
   final SupabaseClient _client;
 
-  /// Toutes les observations d'un user (Théo OU Axelle), tri date desc.
+  /// Toutes les observations d'un user, tri date desc.
   Future<List<Observation>> getByUser(String userId) async {
     final rows = await _client
         .from('observations')
@@ -37,7 +37,8 @@ class ObservationRepository {
 
   /// Crée une observation. La valeur de is_first_for_user est ignorée :
   /// le trigger trg_observations_is_first la recalcule côté serveur.
-  /// points_earned est figé par le client (logique gamification).
+  /// points_earned et was_daily_species sont figés par le client (logique
+  /// gamification côté Dart — cf. observationPoints + isDailySpeciesProvider).
   Future<Observation> create({
     required String userId,
     required String speciesId,
@@ -48,6 +49,7 @@ class ObservationRepository {
     String? photoUrl,
     Map<String, dynamic>? photoExifData,
     required int pointsEarned,
+    bool wasDailySpecies = false,
   }) async {
     final row = await _client
         .from('observations')
@@ -61,6 +63,7 @@ class ObservationRepository {
           'photo_url': photoUrl,
           'photo_exif_data': photoExifData,
           'points_earned': pointsEarned,
+          'was_daily_species': wasDailySpecies,
         })
         .select()
         .single();

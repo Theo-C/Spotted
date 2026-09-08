@@ -24,3 +24,20 @@ class CategoryRepository {
 final categoryRepositoryProvider = Provider<CategoryRepository>((ref) {
   return CategoryRepository(ref.watch(supabaseClientProvider));
 });
+
+/// Toutes les catégories du catalogue, cachées via `keepAlive` : le contenu
+/// change extrêmement rarement (édition manuelle admin), autant éviter les
+/// refetches à chaque navigation.
+final allCategoriesProvider = FutureProvider<List<Category>>((ref) async {
+  ref.keepAlive();
+  return ref.watch(categoryRepositoryProvider).getAll();
+});
+
+/// Lookup O(1) par id — pratique pour les widgets qui rendent des listes
+/// d'items catégorisés (obs récentes, cartes de la Home, etc.). Évite le
+/// pattern `list.firstWhere(id)` répété N fois par frame.
+final categoriesByIdProvider =
+    FutureProvider<Map<String, Category>>((ref) async {
+  final list = await ref.watch(allCategoriesProvider.future);
+  return {for (final c in list) c.id: c};
+});

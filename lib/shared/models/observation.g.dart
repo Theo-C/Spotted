@@ -19,6 +19,7 @@ _Observation _$ObservationFromJson(Map<String, dynamic> json) => _Observation(
   isFirstForUser: json['is_first_for_user'] as bool,
   pointsEarned: (json['points_earned'] as num).toInt(),
   createdAt: DateTime.parse(json['created_at'] as String),
+  wasDailySpecies: json['was_daily_species'] as bool? ?? false,
 );
 
 Map<String, dynamic> _$ObservationToJson(_Observation instance) =>
@@ -35,4 +36,5 @@ Map<String, dynamic> _$ObservationToJson(_Observation instance) =>
       'is_first_for_user': instance.isFirstForUser,
       'points_earned': instance.pointsEarned,
       'created_at': instance.createdAt.toIso8601String(),
+      'was_daily_species': instance.wasDailySpecies,
     };

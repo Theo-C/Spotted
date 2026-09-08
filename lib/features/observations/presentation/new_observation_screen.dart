@@ -24,6 +24,7 @@ import '../../../shared/models/zone.dart';
 import '../../../shared/providers/supabase_client_provider.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../gamification/data/gamification_providers.dart';
+import '../../gamification/data/daily_species_provider.dart';
 import '../../gamification/data/gamification_state_provider.dart';
 import '../../gamification/domain/points.dart';
 import '../../species/data/species_identification_service.dart';
@@ -547,10 +548,21 @@ class _NewObservationScreenState
       // Lu AVANT l'insertion : on récompense la série qui a amené ici, pas
       // celle qui inclura cette obs.
       final streak = ref.read(streakProvider);
+      // Bonus x2 si l'espèce est celle du jour ET si l'obs est datée
+      // d'aujourd'hui (pas un import de photo d'hier — le défi est
+      // l'observation du jour, pas la validation du jour).
+      final now = DateTime.now().toLocal();
+      final obsLocal = _observedAt.toLocal();
+      final isSameDay = obsLocal.year == now.year &&
+          obsLocal.month == now.month &&
+          obsLocal.day == now.day;
+      final isDailySpecies =
+          ref.read(isDailySpeciesProvider(speciesId)) && isSameDay;
       final pointsEarned = observationPoints(
         rarity: rarity,
         isFirst: isFirst,
         hasPhoto: photoUrl != null,
+        isDailySpecies: isDailySpecies,
         streakMultiplier: streak.xpMultiplier,
       );
 
@@ -564,6 +576,7 @@ class _NewObservationScreenState
             photoUrl: photoUrl,
             photoExifData: _photo?.exif,
             pointsEarned: pointsEarned,
+            wasDailySpecies: isDailySpecies,
           );
 
       // Rafraîchit les écrans qui dépendent de la BDD
@@ -651,11 +664,18 @@ class _NewObservationScreenState
             _PhotoSlot(photo: _photo, onTap: _pickPhoto),
             // Banner statut territorial — mis à jour dès qu'une position est
             // connue (EXIF photo ou map picker), et non plus seulement au submit.
+            // AnimatedSize évite le "saut" visuel quand le banner passe de
+            // "Résolution…" à "Compiègne, Oise" (hauteurs différentes).
             const SizedBox(height: 12),
-            _ZoneStatusBanner(
-              resolution: _zoneResolution,
-              hasPhoto: _photo != null,
-              photoHasGps: _photo?.hasGps ?? false,
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: _ZoneStatusBanner(
+                resolution: _zoneResolution,
+                hasPhoto: _photo != null,
+                photoHasGps: _photo?.hasGps ?? false,
+              ),
             ),
             if (_photo != null &&
                 _iaIdentificationEnabled &&
@@ -686,6 +706,17 @@ class _NewObservationScreenState
             const SizedBox(height: 16),
             const _Label('Position'),
             const SizedBox(height: 6),
+            _LocationTools(
+              photo: _photo,
+              onLocationPicked: (pos) {
+                setState(() {
+                  _lat = pos.lat;
+                  _lng = pos.lng;
+                });
+                unawaited(_resolveZone());
+              },
+            ),
+            const SizedBox(height: 8),
             _MiniMapPicker(
               lat: _lat ?? 49.41,
               lng: _lng ?? 2.82,
@@ -712,14 +743,24 @@ class _NewObservationScreenState
             // Sélecteur de rareté inline — apparaît uniquement quand l'espèce
             // choisie n'a pas de ligne species_zones pour la zone détectée.
             // C'est là que le user pose le choix (vs ancien dialog au submit).
-            if (_needsRarityPicker) ...[
-              const SizedBox(height: 12),
-              _RarityPickerInline(
-                zoneName: (_zoneResolution as _ZoneResolved).zone.name,
-                selected: _userPickedRarity,
-                onSelected: (r) => setState(() => _userPickedRarity = r),
-              ),
-            ],
+            // AnimatedSize pour lisser l'apparition (évite le saut de layout
+            // quand la zone se résout).
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: _needsRarityPicker
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: _RarityPickerInline(
+                        zoneName: (_zoneResolution as _ZoneResolved).zone.name,
+                        selected: _userPickedRarity,
+                        onSelected: (r) =>
+                            setState(() => _userPickedRarity = r),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
             if (_error != null) ...[
               const SizedBox(height: 16),
               Text(
@@ -1507,28 +1548,43 @@ class _AddSpeciesDialogState extends ConsumerState<_AddSpeciesDialog> {
         // d'upload, on pointe sur le serveur iNat (CC-licensed, stable).
         photoUrl = _existingPhotoUrl;
       }
-      final created = await ref.read(speciesRepositoryProvider).create(
-            commonName: cn,
-            scientificName: sn,
-            categoryId: _selectedCategoryId!,
-            description: desc,
-            tips: tipsText,
-            photoUrl: photoUrl,
-          );
-      // INSERT species_zones pour chaque territoire coché. Même rareté pour
-      // tous (l'user peut ajuster par-zone plus tard via species_editor).
-      final inserts = _selectedZoneIds
-          .map((zid) => {
-                'species_id': created.id,
-                'zone_id': zid,
-                'rarity': _selectedRarity.name,
-              })
-          .toList();
-      await ref
-          .read(supabaseClientProvider)
-          .from('species_zones')
-          .insert(inserts);
-      if (mounted) Navigator.of(context).pop(created.id);
+      // Si l'espèce existe déjà (typiquement : présente dans Oise, on veut
+      // la lier à Aisne depuis une obs), on skip le CREATE et on ajoute juste
+      // les liens species_zones manquants. Sinon création normale.
+      final repo = ref.read(speciesRepositoryProvider);
+      final existingSpecies = await repo.getByScientificName(sn);
+      final String createdSpeciesId;
+      Set<String> zonesToLink;
+      if (existingSpecies != null) {
+        final alreadyLinked = await repo.getZoneIdsForSpecies(existingSpecies.id);
+        zonesToLink = _selectedZoneIds.difference(alreadyLinked);
+        createdSpeciesId = existingSpecies.id;
+      } else {
+        final created = await repo.create(
+          commonName: cn,
+          scientificName: sn,
+          categoryId: _selectedCategoryId!,
+          description: desc,
+          tips: tipsText,
+          photoUrl: photoUrl,
+        );
+        createdSpeciesId = created.id;
+        zonesToLink = _selectedZoneIds;
+      }
+      if (zonesToLink.isNotEmpty) {
+        final inserts = zonesToLink
+            .map((zid) => {
+                  'species_id': createdSpeciesId,
+                  'zone_id': zid,
+                  'rarity': _selectedRarity.name,
+                })
+            .toList();
+        await ref
+            .read(supabaseClientProvider)
+            .from('species_zones')
+            .insert(inserts);
+      }
+      if (mounted) Navigator.of(context).pop(createdSpeciesId);
     } on PostgrestException catch (e) {
       if (mounted) {
         setState(() {
@@ -1911,6 +1967,224 @@ class _DialogTextInput extends StatelessWidget {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       ),
+    );
+  }
+}
+
+/// Barre d'outils au-dessus de la mini-carte : recherche de lieu (forward
+/// geocoding Mapbox) + bouton "revenir à la position de la photo".
+///
+/// Le bouton retour photo est TOUJOURS visible dès que la photo a un EXIF GPS
+/// (choix uniformité UX : règle simple > branche conditionnelle sur distance).
+/// Si on est déjà pile sur la position, le tap est un no-op inoffensif.
+class _LocationTools extends ConsumerStatefulWidget {
+  const _LocationTools({
+    required this.photo,
+    required this.onLocationPicked,
+  });
+
+  final PickedPhoto? photo;
+  final ValueChanged<({double lat, double lng})> onLocationPicked;
+
+  @override
+  ConsumerState<_LocationTools> createState() => _LocationToolsState();
+}
+
+class _LocationToolsState extends ConsumerState<_LocationTools> {
+  final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  /// Debounce 350 ms avant de taper l'API Mapbox — un forward-geocode par
+  /// frappe coûterait cher et ferait clignoter la liste.
+  Future<List<PlaceSuggestion>> _searchDebounced(String query) async {
+    _debounce?.cancel();
+    final completer = Completer<List<PlaceSuggestion>>();
+    _debounce = Timer(const Duration(milliseconds: 350), () async {
+      try {
+        final results = await ref
+            .read(geocodingServiceProvider)
+            .forwardGeocode(query);
+        if (!completer.isCompleted) completer.complete(results);
+      } catch (_) {
+        if (!completer.isCompleted) completer.complete(const []);
+      }
+    });
+    return completer.future;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photoHasGps = widget.photo?.hasGps ?? false;
+
+    return Row(
+      children: [
+        Expanded(
+          child: RawAutocomplete<PlaceSuggestion>(
+            textEditingController: _controller,
+            focusNode: _focusNode,
+            displayStringForOption: (o) => o.name,
+            optionsBuilder: (value) => _searchDebounced(value.text),
+            fieldViewBuilder: (context, controller, focusNode, _) {
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                style: GoogleFonts.karla(fontSize: 13, color: textPrimary),
+                decoration: InputDecoration(
+                  hintText: 'Rechercher une ville ou un lieu…',
+                  hintStyle: GoogleFonts.karla(fontSize: 13, color: textMuted),
+                  prefixIcon:
+                      const Icon(Icons.search, size: 18, color: forestGreen),
+                  filled: true,
+                  fillColor: surfaceCard,
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide:
+                        const BorderSide(color: Color(0xFFE8E0CE), width: 1.5),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide:
+                        const BorderSide(color: Color(0xFFE8E0CE), width: 1.5),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide:
+                        const BorderSide(color: forestGreen, width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
+              );
+            },
+            optionsViewBuilder: (context, onSelectedCallback, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  color: surfaceBase,
+                  borderRadius: BorderRadius.circular(10),
+                  elevation: 6,
+                  child: ConstrainedBox(
+                    constraints:
+                        const BoxConstraints(maxHeight: 240, maxWidth: 420),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.zero,
+                      itemCount: options.length,
+                      itemBuilder: (context, i) {
+                        final o = options.elementAt(i);
+                        return InkWell(
+                          onTap: () => onSelectedCallback(o),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: const BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: Color(0xFFE8E0CE),
+                                  width: 0.5,
+                                ),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  o.name,
+                                  style: GoogleFonts.cormorantGaramond(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: forestGreen,
+                                  ),
+                                ),
+                                if (o.description.isNotEmpty)
+                                  Text(
+                                    o.description,
+                                    style: GoogleFonts.karla(
+                                      fontSize: 11,
+                                      color: textSecondary,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+            onSelected: (o) {
+              // Vide le champ après sélection — sinon le nom reste et
+              // relance l'autocomplete au prochain focus.
+              _controller.clear();
+              _focusNode.unfocus();
+              widget.onLocationPicked((lat: o.lat, lng: o.lng));
+            },
+          ),
+        ),
+        if (photoHasGps) ...[
+          const SizedBox(width: 8),
+          // Pill "📷 Photo" — le label rend l'action explicite (l'icône seule
+          // n'était pas devinable, cf. feedback UX).
+          Material(
+            color: surfaceCard,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => widget.onLocationPicked((
+                lat: widget.photo!.latitude!,
+                lng: widget.photo!.longitude!,
+              )),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFE8E0CE),
+                    width: 1.5,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.photo_camera_outlined,
+                      color: forestGreen,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Photo',
+                      style: GoogleFonts.karla(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                        color: forestGreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -19,6 +20,12 @@ class NotificationsService {
   /// fenêtre où l'on est encore dispo pour aller dehors prendre une obs.
   /// En dur pour le MVP — pas de picker.
   static const _reminderHour = 13;
+
+  /// 2ᵉ notif : espèce du jour à 8h — l'user commence sa journée en sachant
+  /// ce qu'il faut chercher. Même canal Android (les 2 sont des "rappels
+  /// naturalistes") — évite un 2ᵉ prompt de permission channel.
+  static const _dailySpeciesNotifId = 1002;
+  static const _dailySpeciesHour = 8;
 
   final _plugin = FlutterLocalNotificationsPlugin();
 
@@ -75,6 +82,7 @@ class NotificationsService {
     await Permission.scheduleExactAlarm.request();
 
     await _scheduleDaily();
+    await _scheduleDailySpecies();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kEnabled, true);
     return true;
@@ -89,10 +97,11 @@ class NotificationsService {
         : AndroidScheduleMode.inexactAllowWhileIdle;
   }
 
-  /// Désactive le rappel : annule la notif planifiée + persiste l'état.
+  /// Désactive les rappels : annule les 2 notifs planifiées + persiste l'état.
   Future<void> disable() async {
     await _ensureInitialized();
     await _plugin.cancel(_streakNotifId);
+    await _plugin.cancel(_dailySpeciesNotifId);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kEnabled, false);
   }
@@ -137,12 +146,84 @@ class NotificationsService {
     );
   }
 
-  /// Au boot : si l'user avait opt-in, re-planifie pour s'assurer que la
-  /// notif est toujours là (Android peut clear les schedules après reboot).
-  Future<void> reconcileOnBoot() async {
-    if (await isEnabled()) {
-      await _scheduleDaily();
+  /// (Re)planifie la notif "espèce du jour" à 8h locale. Texte générique
+  /// pour rester valable sans avoir tiré l'espèce à l'avance — l'user
+  /// découvre laquelle en ouvrant l'app.
+  Future<void> _scheduleDailySpecies() async {
+    await _ensureInitialized();
+    final tzNow = tz.TZDateTime.now(tz.local);
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      tzNow.year,
+      tzNow.month,
+      tzNow.day,
+      _dailySpeciesHour,
+    );
+    if (!scheduled.isAfter(tzNow)) {
+      scheduled = scheduled.add(const Duration(days: 1));
     }
+
+    final mode = await _bestScheduleMode();
+    await _plugin.zonedSchedule(
+      _dailySpeciesNotifId,
+      'Ton espèce du jour t\'attend',
+      "Ouvre Spotted pour découvrir quelle espèce débusquer aujourd'hui 🔍",
+      scheduled,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          'Rappel série',
+          channelDescription: 'Rappel quotidien pour entretenir la série',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+      androidScheduleMode: mode,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      matchDateTimeComponents: DateTimeComponents.time,
+    );
+  }
+
+  /// Au boot : si l'user avait opt-in, re-planifie les 2 notifs pour s'assurer
+  /// qu'elles sont toujours là (Android peut clear les schedules après reboot,
+  /// et l'user peut avoir upgradé une version qui a rajouté une notif — la
+  /// notif "espèce du jour" ajoutée en v1.7 n'était par exemple pas dans
+  /// l'`enable()` des versions antérieures).
+  ///
+  /// Logging via debugPrint pour diagnostiquer les cas où les notifs ne
+  /// s'affichent pas malgré l'opt-in (permission révoquée dans les settings
+  /// Android, doze mode OEM agressif, etc.) — visible via `adb logcat`.
+  Future<void> reconcileOnBoot() async {
+    final enabled = await isEnabled();
+    if (!enabled) {
+      debugPrint('[notifs] reconcileOnBoot: user not opted in, skipping');
+      return;
+    }
+    await _ensureInitialized();
+    final notifStatus = await Permission.notification.status;
+    final exactStatus = await Permission.scheduleExactAlarm.status;
+    debugPrint(
+      '[notifs] reconcileOnBoot: notif=${notifStatus.name}, '
+      'exactAlarm=${exactStatus.name}',
+    );
+    if (!notifStatus.isGranted) {
+      // Opt-in encore true dans SharedPrefs mais permission révoquée en
+      // système → les schedule vont réussir mais aucune notif ne s'affichera.
+      // On force disable pour que l'UI (switch Profil) reflète l'état réel.
+      debugPrint(
+        '[notifs] permission was revoked in system settings — auto-disable',
+      );
+      await disable();
+      return;
+    }
+    await _scheduleDaily();
+    await _scheduleDailySpecies();
+    final pending = await _plugin.pendingNotificationRequests();
+    debugPrint(
+      '[notifs] scheduled: ${pending.map((r) => "id=${r.id}").join(", ")}',
+    );
   }
 
 }

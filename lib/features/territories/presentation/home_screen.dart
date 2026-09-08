@@ -5,13 +5,16 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../app/theme.dart';
 import '../../../shared/models/zone.dart';
+import '../../auth/data/auth_providers.dart';
 import '../../gamification/data/gamification_providers.dart';
 import '../../gamification/data/gamification_state_provider.dart';
 import '../../gamification/domain/level.dart';
 import '../../gamification/domain/streak.dart';
 import '../../gamification/presentation/badge_unlock_overlay.dart';
 import '../../gamification/presentation/daily_quests_section.dart';
+import '../../gamification/presentation/daily_species_banner.dart';
 import '../../gamification/presentation/level_up_overlay.dart';
+import '../../observations/presentation/recent_observations_section.dart';
 import '../data/territory_progress_provider.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -36,6 +39,10 @@ class HomeScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 12),
                 const DailyQuestsSection(),
+                const SizedBox(height: 16),
+                const DailySpeciesBanner(),
+                const SizedBox(height: 20),
+                const RecentObservationsSection(),
                 const SizedBox(height: 20),
                 const _SectionLabel(text: 'Mes terrains'),
                 const SizedBox(height: 8),
@@ -144,13 +151,21 @@ Future<void> _showAddMenu(BuildContext context) async {
                 context.push('/observation/new');
               },
             ),
-            _AddMenuTile(
-              icon: Icons.pets,
-              label: 'Nouvelle espèce',
-              subtitle: 'Ajoute une espèce au catalogue',
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                context.push('/species/new');
+            // Gate admin — l'ajout au catalogue est réservé (curation
+            // éditoriale, pas de contribution libre). Consumer local pour
+            // éviter de propager ref jusqu'ici.
+            Consumer(
+              builder: (context, ref, _) {
+                if (!ref.watch(isAdminProvider)) return const SizedBox.shrink();
+                return _AddMenuTile(
+                  icon: Icons.pets,
+                  label: 'Nouvelle espèce',
+                  subtitle: 'Ajoute une espèce au catalogue',
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    context.push('/species/new');
+                  },
+                );
               },
             ),
           ],
@@ -591,6 +606,7 @@ class _TerritoriesList extends ConsumerWidget {
         final others =
             zones.where((z) => z.id != heroZone.id).toList(growable: false);
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _TerritoryHero(
               zone: heroZone,
@@ -598,12 +614,29 @@ class _TerritoriesList extends ConsumerWidget {
               progressAsync:
                   ref.watch(zoneProgressProvider(heroZone.shortCode ?? '')),
             ),
-            for (final z in others) ...[
+            // Scroll horizontal pour les autres territoires — footprint
+            // constant même quand la liste grandit (curation d'autres
+            // départements à venir). Masqué si un seul territoire configuré.
+            if (others.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24),
+                child: _OthersLabel(),
+              ),
               const SizedBox(height: 8),
-              _TerritoryRowCompact(
-                zone: z,
-                progressAsync:
-                    ref.watch(zoneProgressProvider(z.shortCode ?? '')),
+              SizedBox(
+                height: 130,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  itemCount: others.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
+                  itemBuilder: (_, i) => _TerritoryCardCompact(
+                    zone: others[i],
+                    progressAsync: ref
+                        .watch(zoneProgressProvider(others[i].shortCode ?? '')),
+                  ),
+                ),
               ),
             ],
           ],
@@ -829,39 +862,78 @@ class _TerritoryHeroProgress extends StatelessWidget {
   }
 }
 
-/// Ligne compacte pour les terrains non-actifs (l'user n'y est pas).
-/// ~64 px de haut, tient à 10+ territoires sans scroll.
-class _TerritoryRowCompact extends StatelessWidget {
-  const _TerritoryRowCompact({required this.zone, required this.progressAsync});
+/// Petit label discret au-dessus du scroll horizontal des autres terrains.
+/// Volontairement moins fort que le titre "Mes terrains" en haut pour ne pas
+/// concurrencer visuellement le hero.
+class _OthersLabel extends StatelessWidget {
+  const _OthersLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      'AUTRES TERRAINS',
+      style: GoogleFonts.karla(
+        fontSize: 9,
+        letterSpacing: 2,
+        fontWeight: FontWeight.bold,
+        color: textMuted,
+      ),
+    );
+  }
+}
+
+/// Carte compacte pour un terrain non-actif — affichée en scroll horizontal.
+/// Footprint constant peu importe le nombre de départements curés.
+class _TerritoryCardCompact extends StatelessWidget {
+  const _TerritoryCardCompact({
+    required this.zone,
+    required this.progressAsync,
+  });
 
   final Zone zone;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => context.go('/territory/${zone.id}'),
+    return Material(
+      color: surfaceCard,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => context.go('/territory/${zone.id}'),
+        child: SizedBox(
+          width: 140,
           child: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: surfaceCard,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: const Color(0xFFE8E0CE), width: 1.2),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _TerritoryBadge(code: zone.shortCode ?? '?', size: 40),
-                const SizedBox(width: 12),
-                Expanded(child: _TerritoryRowInfo(
-                  name: zone.name,
-                  progressAsync: progressAsync,
-                )),
-                const Icon(Icons.chevron_right, size: 18, color: forestGreen),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _TerritoryBadge(code: zone.shortCode ?? '?', size: 36),
+                    const Icon(Icons.chevron_right,
+                        size: 16, color: forestGreen),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  zone.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.cormorantGaramond(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: forestGreen,
+                    height: 1.05,
+                  ),
+                ),
+                const Spacer(),
+                _TerritoryCardProgress(progressAsync: progressAsync),
               ],
             ),
           ),
@@ -871,91 +943,38 @@ class _TerritoryRowCompact extends StatelessWidget {
   }
 }
 
-class _TerritoryRowInfo extends StatelessWidget {
-  const _TerritoryRowInfo({
-    required this.name,
-    required this.progressAsync,
-  });
+/// Ligne "12 / 50" + barre — extrait pour éviter le when() imbriqué dans la
+/// card. Loading/error dégradent silencieusement (juste la barre grise).
+class _TerritoryCardProgress extends StatelessWidget {
+  const _TerritoryCardProgress({required this.progressAsync});
 
-  final String name;
   final AsyncValue<TerritoryProgress> progressAsync;
 
   @override
   Widget build(BuildContext context) {
-    return progressAsync.when(
-      loading: () => SizedBox(
-        height: 32,
-        child: Row(
-          children: [
-            Text(
-              name,
-              style: GoogleFonts.cormorantGaramond(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: forestGreen,
-              ),
-            ),
-          ],
-        ),
-      ),
-      error: (_, _) => Text(
-        name,
-        style: GoogleFonts.cormorantGaramond(
-          fontSize: 17,
-          fontWeight: FontWeight.w600,
-          color: forestGreen,
-        ),
-      ),
-      data: (p) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            name,
-            overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: forestGreen,
-              height: 1.0,
-            ),
+    final data = progressAsync.asData?.value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: data?.fraction ?? 0,
+            minHeight: 4,
+            backgroundColor: forestGreen.withValues(alpha: 0.15),
+            valueColor: const AlwaysStoppedAnimation<Color>(terracotta),
           ),
-          const SizedBox(height: 5),
-          Row(
-            children: [
-              Text(
-                '${p.observed}',
-                style: GoogleFonts.karla(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: forestGreen,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: p.fraction,
-                    minHeight: 4,
-                    backgroundColor: forestGreen.withValues(alpha: 0.15),
-                    valueColor:
-                        const AlwaysStoppedAnimation<Color>(terracotta),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '${p.total}',
-                style: GoogleFonts.karla(
-                  fontSize: 11,
-                  color: textSecondary,
-                ),
-              ),
-            ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          data == null ? '…' : '${data.observed} / ${data.total}',
+          style: GoogleFonts.karla(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: forestGreen,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

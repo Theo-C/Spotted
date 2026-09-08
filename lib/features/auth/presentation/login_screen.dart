@@ -6,6 +6,17 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../app/theme.dart';
 import '../data/auth_repository.dart';
 
+/// Écran de login — auth passwordless via Magic Link email.
+///
+/// Google OAuth est câblé dans [AuthRepository.signInWithGoogle] mais pas
+/// exposé dans l'UI pour l'instant (nécessite un setup Google Cloud +
+/// Supabase Dashboard qui n'est pas encore fait). Réactiver ici quand la
+/// config est prête — un bouton "Continuer avec Google" au-dessus de
+/// l'email suffit.
+///
+/// Volontairement sans champ mot de passe : les comptes historiques
+/// (créés manuellement avant l'ouverture) basculent en Magic Link via
+/// leur email existant, aucune migration manuelle nécessaire.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -15,45 +26,55 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _isLoading = false;
-  bool _obscurePassword = true;
+  bool _isSendingLink = false;
   String? _errorMessage;
+  bool _linkSent = false;
 
   @override
   void dispose() {
     _emailController.dispose();
-    _passwordController.dispose();
     super.dispose();
   }
 
-  Future<void> _signIn() async {
+  Future<void> _sendMagicLink() async {
+    final email = _emailController.text.trim();
+    if (!_isValidEmail(email)) {
+      setState(() => _errorMessage = 'Email invalide.');
+      return;
+    }
     setState(() {
-      _isLoading = true;
+      _isSendingLink = true;
       _errorMessage = null;
+      _linkSent = false;
     });
     try {
-      await ref.read(authRepositoryProvider).signIn(
-            email: _emailController.text.trim(),
-            password: _passwordController.text,
-          );
-      // Le redirect /login → / est géré par la garde de route (Phase 3.E).
+      await ref.read(authRepositoryProvider).signInWithMagicLink(email);
+      if (mounted) setState(() => _linkSent = true);
     } on AuthException catch (e) {
-      if (mounted) setState(() => _errorMessage = _translateError(e.message));
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = 'Erreur inattendue');
+      if (mounted) {
+        setState(() => _errorMessage = _translateError(e.message));
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _errorMessage = 'Envoi impossible. Réessaie.');
+      }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isSendingLink = false);
     }
+  }
+
+  bool _isValidEmail(String s) {
+    // Regex simple, pas RFC-strict — on veut juste catcher les typos évidents.
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(s);
   }
 
   String _translateError(String raw) {
     final lower = raw.toLowerCase();
-    if (lower.contains('invalid login credentials')) {
-      return 'Email ou mot de passe incorrect.';
+    if (lower.contains('rate limit')) {
+      return 'Trop de tentatives. Attends une minute.';
     }
-    if (lower.contains('email not confirmed')) {
-      return 'Email non confirmé.';
+    if (lower.contains('invalid')) {
+      return 'Email invalide.';
     }
     return raw;
   }
@@ -72,31 +93,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 48),
               _buildHeader(),
               const SizedBox(height: 56),
-              _buildField(
-                controller: _emailController,
-                label: 'Email',
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-                autofocus: true,
-              ),
-              const SizedBox(height: 16),
-              _buildField(
-                controller: _passwordController,
-                label: 'Mot de passe',
-                obscure: _obscurePassword,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _signIn(),
-                suffix: IconButton(
-                  icon: Icon(
-                    _obscurePassword
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
+              if (_linkSent)
+                _buildLinkSentBanner()
+              else ...[
+                _buildEmailField(),
+                const SizedBox(height: 14),
+                _buildMagicLinkButton(),
+                const SizedBox(height: 16),
+                Text(
+                  "On t'envoie un lien magique pour te connecter — pas de mot de passe à retenir.",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.karla(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
                     color: const Color(0xFFC4A572),
+                    height: 1.5,
                   ),
-                  onPressed: () =>
-                      setState(() => _obscurePassword = !_obscurePassword),
                 ),
-              ),
+              ],
               if (_errorMessage != null) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -108,8 +122,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   textAlign: TextAlign.center,
                 ),
               ],
-              const SizedBox(height: 32),
-              _buildSubmitButton(),
             ],
           ),
         ),
@@ -154,7 +166,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Carnet de chasse naturaliste',
+          'Ton carnet naturaliste',
           style: GoogleFonts.cormorantGaramond(
             fontSize: 15,
             fontStyle: FontStyle.italic,
@@ -166,16 +178,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _buildField({
-    required TextEditingController controller,
-    required String label,
-    bool obscure = false,
-    TextInputType? keyboardType,
-    TextInputAction? textInputAction,
-    void Function(String)? onSubmitted,
-    Widget? suffix,
-    bool autofocus = false,
-  }) {
+  Widget _buildEmailField() {
     const accent = Color(0xFFC4A572);
     return Container(
       decoration: BoxDecoration(
@@ -183,58 +186,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: accent.withValues(alpha: 0.4), width: 1.5),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              obscureText: obscure,
-              keyboardType: keyboardType,
-              textInputAction: textInputAction,
-              onSubmitted: onSubmitted,
-              autofocus: autofocus,
-              enabled: !_isLoading,
-              style: GoogleFonts.karla(color: surfaceBase, fontSize: 15),
-              cursorColor: gold,
-              decoration: InputDecoration(
-                labelText: label.toUpperCase(),
-                labelStyle: GoogleFonts.karla(
-                  color: accent,
-                  fontSize: 11,
-                  letterSpacing: 1.5,
-                  fontWeight: FontWeight.bold,
-                ),
-                floatingLabelBehavior: FloatingLabelBehavior.always,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: TextField(
+        controller: _emailController,
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _sendMagicLink(),
+        enabled: !_isSendingLink,
+        style: GoogleFonts.karla(color: surfaceBase, fontSize: 15),
+        cursorColor: gold,
+        decoration: InputDecoration(
+          hintText: 'ton@email.com',
+          hintStyle: GoogleFonts.karla(
+            color: accent.withValues(alpha: 0.6),
+            fontSize: 15,
           ),
-          ?suffix,
-        ],
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 16),
+        ),
       ),
     );
   }
 
-  Widget _buildSubmitButton() {
+  Widget _buildMagicLinkButton() {
     return FilledButton(
-      onPressed: _isLoading ? null : _signIn,
+      onPressed: _isSendingLink ? null : _sendMagicLink,
       style: FilledButton.styleFrom(
         backgroundColor: gold,
         foregroundColor: forestGreen,
         disabledBackgroundColor: gold.withValues(alpha: 0.4),
         padding: const EdgeInsets.symmetric(vertical: 18),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: GoogleFonts.karla(
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 1.5,
-        ),
       ),
-      child: _isLoading
+      child: _isSendingLink
           ? const SizedBox(
               width: 20,
               height: 20,
@@ -243,7 +229,77 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 color: forestGreen,
               ),
             )
-          : const Text('CONNEXION'),
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  "RECEVOIR MON LIEN",
+                  style: GoogleFonts.karla(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.5,
+                    color: forestGreen,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.arrow_forward, size: 16, color: forestGreen),
+              ],
+            ),
+    );
+  }
+
+  /// État post-tap "Recevoir un lien" — confirmation + instruction claire.
+  /// L'user quitte l'app pour son mail, tap le lien → deep link revient
+  /// ici, session créée, router redirige.
+  Widget _buildLinkSentBanner() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: surfaceBase.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: gold.withValues(alpha: 0.6),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.mark_email_read_outlined, color: gold, size: 40),
+          const SizedBox(height: 12),
+          Text(
+            'Vérifie tes emails',
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              color: surfaceBase,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'On t\'a envoyé un lien de connexion à\n${_emailController.text.trim()}',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.karla(
+              fontSize: 13,
+              color: const Color(0xFFC4A572),
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () =>
+                setState(() => _linkSent = false),
+            child: Text(
+              'Renvoyer un lien',
+              style: GoogleFonts.karla(
+                fontSize: 12,
+                color: gold,
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
+

@@ -26,3 +26,10 @@ final currentAppUserProvider = FutureProvider<AppUser?>((ref) async {
   if (authUser == null) return null;
   return ref.watch(userRepositoryProvider).getById(authUser.id);
 });
+
+/// Vrai si l'utilisateur courant a le flag `is_admin` (droit d'éditer le
+/// catalogue d'espèces). Faux tant que le profil charge ou si non connecté —
+/// on cache par défaut, on révèle si on est sûr.
+final isAdminProvider = Provider<bool>((ref) {
+  return ref.watch(currentAppUserProvider).asData?.value?.isAdmin ?? false;
+});

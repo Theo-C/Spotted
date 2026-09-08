@@ -17,6 +17,9 @@ import '../../gamification/domain/badge.dart';
 import '../../gamification/domain/level.dart';
 import '../../observations/data/observations_for_map_provider.dart';
 
+/// Actions du kebab menu de l'AppBar Profil.
+enum _ProfileMenuAction { tuto, aiDebug, logout }
+
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
@@ -27,8 +30,13 @@ class ProfileScreen extends ConsumerWidget {
     final currentAppUser = ref.watch(currentAppUserProvider).asData?.value;
     final currentAuthUser = ref.watch(currentAuthUserProvider);
     final myUserId = currentAuthUser?.id;
+    // Le Diagnostic IA n'est utile qu'en dev (curation, tests de coût). On le
+    // gate admin comme l'édition d'espèces — les users standards ne le
+    // voient pas dans le menu.
+    final isAdmin = ref.watch(isAdminProvider);
     // Stats persos : on filtre les obs partagées sur user_id = soi.
-    // Sans ça, Théo et Axelle verraient les mêmes totaux (cf. bug 2026-05-10).
+    // Sans ça, tous les users verraient les mêmes totaux si la RLS SELECT
+    // s'assouplit (cas équipes V2). Defense-in-depth côté client.
     final myObsAsync = allObsAsync.whenData(
       (items) => myUserId == null
           ? const <ObservationOnMap>[]
@@ -45,11 +53,45 @@ class ProfileScreen extends ConsumerWidget {
             color: forestGreen,
           ),
         ),
+        // Kebab menu qui absorbe tout le secondaire (tuto, diagnostic IA,
+        // logout). Libère le body d'une pile de tiles qui grignotaient trop
+        // d'espace. Le switch "rappel quotidien" reste dans le body : c'est
+        // un toggle interactif, pas un item d'action ponctuel.
+        actions: [
+          PopupMenuButton<_ProfileMenuAction>(
+            icon: const Icon(Icons.more_vert, color: forestGreen),
+            color: surfaceBase,
+            position: PopupMenuPosition.under,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: Color(0xFFE8E0CE)),
+            ),
+            onSelected: (a) => _handleMenuAction(context, ref, a),
+            itemBuilder: (_) => [
+              _menuItem(
+                _ProfileMenuAction.tuto,
+                Icons.menu_book_outlined,
+                'Comment ça marche',
+                forestGreen,
+              ),
+              if (isAdmin)
+                _menuItem(
+                  _ProfileMenuAction.aiDebug,
+                  Icons.bug_report_outlined,
+                  'Diagnostic IA',
+                  forestGreen,
+                ),
+              const PopupMenuDivider(),
+              _menuItem(
+                _ProfileMenuAction.logout,
+                Icons.logout,
+                'Se déconnecter',
+                terracotta,
+              ),
+            ],
+          ),
+        ],
       ),
-      // Layout fixe sans scroll : le bloc bas (Réglages) est ancré en bas du
-      // viewport via Spacer. La page tient toujours sur un écran standard ;
-      // si jamais le contenu dépasse (a11y / petit écran), le Column laissera
-      // un overflow visible — préférable au scroll qui éloigne les Réglages.
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
@@ -69,27 +111,54 @@ class ProfileScreen extends ConsumerWidget {
               const SizedBox(height: 14),
               const _BadgesTeaser(),
               const Spacer(),
-              const Divider(color: Color(0xFFE8E0CE)),
-              const SizedBox(height: 6),
-              const _SectionLabel('Réglages'),
-              const SizedBox(height: 4),
+              // Seul toggle restant dans le body — c'est de l'état, pas une
+              // action ponctuelle, il mérite de rester visible d'un coup d'œil.
               const _StreakNotifsTile(),
-              _SettingsTile(
-                icon: Icons.bug_report_outlined,
-                label: 'Diagnostic IA',
-                onTap: () => context.push('/ai-debug'),
-              ),
-              _SettingsTile(
-                icon: Icons.logout,
-                label: 'Se déconnecter',
-                color: const Color(0xFFB8624A),
-                onTap: () => _confirmLogout(context, ref),
-              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  PopupMenuItem<_ProfileMenuAction> _menuItem(
+    _ProfileMenuAction action,
+    IconData icon,
+    String label,
+    Color color,
+  ) {
+    return PopupMenuItem(
+      value: action,
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: GoogleFonts.karla(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleMenuAction(
+    BuildContext context,
+    WidgetRef ref,
+    _ProfileMenuAction action,
+  ) {
+    switch (action) {
+      case _ProfileMenuAction.tuto:
+        context.push('/tuto');
+      case _ProfileMenuAction.aiDebug:
+        context.push('/ai-debug');
+      case _ProfileMenuAction.logout:
+        _confirmLogout(context, ref);
+    }
   }
 
   Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
@@ -246,7 +315,7 @@ class _LevelContent extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    user?.pseudo ?? 'Compte partagé',
+                    user?.pseudo ?? 'Naturaliste',
                     style: GoogleFonts.cormorantGaramond(
                       fontSize: 28,
                       fontWeight: FontWeight.w600,
@@ -323,24 +392,6 @@ class _LevelContent extends StatelessWidget {
       buffer.write(s[i]);
     }
     return buffer.toString();
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text.toUpperCase(),
-      style: GoogleFonts.karla(
-        fontSize: 10,
-        letterSpacing: 2.5,
-        fontWeight: FontWeight.bold,
-        color: textSecondary,
-      ),
-    );
   }
 }
 
@@ -458,8 +509,10 @@ class _StatDivider extends StatelessWidget {
   }
 }
 
-/// Carte "teaser" badges : compteur + 4 derniers débloqués + tap pour ouvrir
-/// la grille complète dans un bottom sheet plein écran.
+/// Carte "prochain badge" : compteur en top + le prochain badge à débloquer
+/// (progression la plus haute parmi les non-earned et non-mystères) avec sa
+/// barre de progression. Motive à continuer plutôt que de contempler les
+/// badges déjà pris. Tap = grille complète.
 class _BadgesTeaser extends ConsumerWidget {
   const _BadgesTeaser();
 
@@ -471,7 +524,7 @@ class _BadgesTeaser extends ConsumerWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => context.push('/badges'),
+        onTap: () => context.push('/profile/badges'),
         child: Container(
           padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
           decoration: BoxDecoration(
@@ -481,7 +534,7 @@ class _BadgesTeaser extends ConsumerWidget {
           ),
           child: badgesAsync.when(
             loading: () => const SizedBox(
-              height: 48,
+              height: 60,
               child: Center(
                 child: SizedBox(
                   width: 18,
@@ -493,8 +546,7 @@ class _BadgesTeaser extends ConsumerWidget {
             ),
             error: (e, _) => Row(
               children: [
-                const Icon(Icons.error_outline,
-                    size: 18, color: terracotta),
+                const Icon(Icons.error_outline, size: 18, color: terracotta),
                 const SizedBox(width: 10),
                 Text(
                   'Badges indisponibles',
@@ -503,58 +555,28 @@ class _BadgesTeaser extends ConsumerWidget {
               ],
             ),
             data: (statuses) {
-              final earned =
-                  statuses.where((b) => b.isEarned).toList()
-                    ..sort((a, b) => b.earnedAt!.compareTo(a.earnedAt!));
-              final preview = earned.take(4).toList();
-              return Row(
+              final earnedCount = statuses.where((b) => b.isEarned).length;
+              // "Prochain" = plus haute progression parmi les non-earned et
+              // non-mystères. On exclut les mystères pour ne pas divulguer
+              // leur condition, même partiellement.
+              final candidates = statuses
+                  .where((b) => !b.isEarned && !b.def.isHidden)
+                  .toList()
+                ..sort((a, b) =>
+                    b.progress.value.compareTo(a.progress.value));
+              final next = candidates.isEmpty ? null : candidates.first;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'BADGES',
-                        style: GoogleFonts.karla(
-                          fontSize: 10,
-                          letterSpacing: 2.5,
-                          fontWeight: FontWeight.bold,
-                          color: textSecondary,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${earned.length} / ${statuses.length}',
-                        style: GoogleFonts.cormorantGaramond(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w600,
-                          color: forestGreen,
-                          height: 1.0,
-                        ),
-                      ),
-                    ],
+                  _TeaserHeader(
+                    earned: earnedCount,
+                    total: statuses.length,
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: preview.isEmpty
-                        ? Text(
-                            'Pas encore débloqué',
-                            style: GoogleFonts.karla(
-                              fontSize: 11,
-                              fontStyle: FontStyle.italic,
-                              color: textMuted,
-                            ),
-                          )
-                        : Row(
-                            children: [
-                              for (final s in preview) ...[
-                                _BadgePreviewBubble(badge: s),
-                                const SizedBox(width: 6),
-                              ],
-                            ],
-                          ),
-                  ),
-                  const Icon(Icons.chevron_right,
-                      size: 22, color: forestGreen),
+                  const SizedBox(height: 10),
+                  if (next == null)
+                    _AllUnlockedRow()
+                  else
+                    _NextBadgeRow(status: next),
                 ],
               );
             },
@@ -563,26 +585,168 @@ class _BadgesTeaser extends ConsumerWidget {
       ),
     );
   }
-
 }
 
-class _BadgePreviewBubble extends StatelessWidget {
-  const _BadgePreviewBubble({required this.badge});
+class _TeaserHeader extends StatelessWidget {
+  const _TeaserHeader({required this.earned, required this.total});
 
-  final BadgeStatus badge;
+  final int earned;
+  final int total;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: surfaceMuted,
-        shape: BoxShape.circle,
-        border: Border.all(color: gold.withValues(alpha: 0.6), width: 1.2),
-      ),
-      alignment: Alignment.center,
-      child: Text(badge.def.icon, style: const TextStyle(fontSize: 18)),
+    return Row(
+      children: [
+        Text(
+          'BADGES',
+          style: GoogleFonts.karla(
+            fontSize: 10,
+            letterSpacing: 2.5,
+            fontWeight: FontWeight.bold,
+            color: textSecondary,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          '$earned / $total',
+          style: GoogleFonts.karla(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: forestGreen,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Ligne "prochain à débloquer" : emoji + nom + barre de progression avec
+/// son label ("3 / 4 mésanges"). Rendu quand il reste au moins un badge
+/// non-mystère à découvrir.
+class _NextBadgeRow extends StatelessWidget {
+  const _NextBadgeRow({required this.status});
+
+  final BadgeStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = status.progress.value.clamp(0.0, 1.0);
+    return Row(
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: surfaceMuted,
+            shape: BoxShape.circle,
+            border:
+                Border.all(color: gold.withValues(alpha: 0.6), width: 1.2),
+          ),
+          alignment: Alignment.center,
+          child: Text(status.def.icon, style: const TextStyle(fontSize: 22)),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'PROCHAIN À DÉBLOQUER',
+                style: GoogleFonts.karla(
+                  fontSize: 8.5,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.bold,
+                  color: terracotta,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                status.def.name,
+                style: GoogleFonts.cormorantGaramond(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: forestGreen,
+                  height: 1.1,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 5),
+              Row(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: pct,
+                        minHeight: 4,
+                        backgroundColor: textMuted.withValues(alpha: 0.2),
+                        valueColor:
+                            const AlwaysStoppedAnimation<Color>(terracotta),
+                      ),
+                    ),
+                  ),
+                  if (status.progress.label != null) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      status.progress.label!,
+                      style: GoogleFonts.karla(
+                        fontSize: 10,
+                        fontStyle: FontStyle.italic,
+                        color: textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 4),
+        const Icon(Icons.chevron_right, size: 22, color: forestGreen),
+      ],
+    );
+  }
+}
+
+/// Rendu quand tous les badges non-mystères sont pris. Message feel-good
+/// invitant à chasser les mystères sans en révéler la condition.
+class _AllUnlockedRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Text('🏆', style: TextStyle(fontSize: 28)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Tous les badges visibles sont pris !',
+                style: GoogleFonts.cormorantGaramond(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: forestGreen,
+                  height: 1.1,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Reste à percer les mystères…',
+                style: GoogleFonts.karla(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Icon(Icons.chevron_right, size: 22, color: forestGreen),
+      ],
     );
   }
 }
@@ -690,47 +854,3 @@ class _StreakNotifsTile extends ConsumerWidget {
   }
 }
 
-class _SettingsTile extends StatelessWidget {
-  const _SettingsTile({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.color = forestGreen,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
-          child: Row(
-            children: [
-              Icon(icon, size: 20, color: color),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  label,
-                  style: GoogleFonts.karla(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
-                ),
-              ),
-              Icon(Icons.chevron_right, size: 20, color: color),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

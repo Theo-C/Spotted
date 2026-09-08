@@ -4,8 +4,8 @@ import '../../../shared/providers/supabase_client_provider.dart';
 import '../../auth/data/auth_providers.dart';
 import '../domain/level.dart';
 
-/// Total des points cumulés par l'utilisateur connecté (Théo OU Axelle).
-/// Avec le passage à 2 comptes dissociés, chacun a sa propre progression.
+/// Total des points cumulés par l'utilisateur connecté — chaque user a
+/// sa propre progression.
 ///
 /// Inclut :
 ///   - les points gagnés sur les observations (observations.points_earned)
@@ -87,9 +87,3 @@ final zoneProgressProvider =
       .toSet();
   return TerritoryProgress(observed: distinct.length, total: total);
 });
-
-/// Progression sur la zone Oise (60) — kept for backward-compat.
-/// Préférer zoneProgressProvider('60') ou ('02').
-final oiseProgressProvider = FutureProvider<TerritoryProgress>(
-  (ref) => ref.watch(zoneProgressProvider('60').future),
-);

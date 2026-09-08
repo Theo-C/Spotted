@@ -127,38 +127,52 @@ class CategoryProgress {
 /// Liste des catégories enrichies de leur progression sur la zone donnée.
 /// Progression individuelle (modèle 2 comptes dissociés depuis 2026-05-10) :
 /// chaque user voit sa propre complétion par catégorie.
+///
+/// Perf : les 3 fetches (categories, species_zones, observations) sont lancés
+/// EN PARALLÈLE via Future.wait → une seule latence réseau au lieu de trois.
+/// `keepAlive` évite le refetch quand l'user navigue home → territoire → home
+/// (invalidation explicite sur insert/delete obs).
 final categoriesWithProgressProvider =
     FutureProvider.family<List<CategoryProgress>, String>((ref, zoneId) async {
+  ref.keepAlive();
   final userId = ref.watch(currentAuthUserProvider)?.id;
   final client = ref.watch(supabaseClientProvider);
-  final categories = await ref.watch(categoryRepositoryProvider).getAll();
 
   // Total : species_zones de la zone, on récupère le category_id via jointure.
   // (Total commun aux deux users — c'est le catalogue curé de la zone.)
-  final totalRows = await client
+  final totalFuture = client
       .from('species_zones')
       .select('species_id, species!inner(category_id)')
       .eq('zone_id', zoneId);
 
   // Observed : observations de l'utilisateur courant sur la zone.
   // Sans userId (pas connecté), on retourne 0 observation côté UI.
-  final obsRows = userId == null
-      ? const <Map<String, dynamic>>[]
-      : await client
+  final obsFuture = userId == null
+      ? Future<List<dynamic>>.value(const [])
+      : client
           .from('observations')
           .select('species_id, species!inner(category_id)')
           .eq('zone_id', zoneId)
           .eq('user_id', userId);
 
+  final results = await Future.wait<dynamic>([
+    ref.watch(categoryRepositoryProvider).getAll(),
+    totalFuture,
+    obsFuture,
+  ]);
+  final categories = results[0] as List;
+  final totalRows = results[1] as List;
+  final obsRows = results[2] as List;
+
   final totalByCategory = <String, int>{};
-  for (final row in totalRows as List) {
+  for (final row in totalRows) {
     final categoryId = ((row as Map<String, dynamic>)['species']
         as Map<String, dynamic>)['category_id'] as String;
     totalByCategory[categoryId] = (totalByCategory[categoryId] ?? 0) + 1;
   }
 
   final observedByCategory = <String, Set<String>>{};
-  for (final row in obsRows as List) {
+  for (final row in obsRows) {
     final m = row as Map<String, dynamic>;
     final speciesId = m['species_id'] as String;
     final categoryId =

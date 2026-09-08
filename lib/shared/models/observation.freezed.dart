@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Observation {
 
- String get id; String get userId; String get speciesId; String? get zoneId; DateTime get observedAt; double get latitude; double get longitude; String? get photoUrl; Map<String, dynamic>? get photoExifData; bool get isFirstForUser; int get pointsEarned; DateTime get createdAt;
+ String get id; String get userId; String get speciesId; String? get zoneId; DateTime get observedAt; double get latitude; double get longitude; String? get photoUrl; Map<String, dynamic>? get photoExifData; bool get isFirstForUser; int get pointsEarned; DateTime get createdAt; bool get wasDailySpecies;
 /// Create a copy of Observation
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $ObservationCopyWith<Observation> get copyWith => _$ObservationCopyWithImpl<Obse
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Observation&&(identical(other.id, id) || other.id == id)&&(identical(other.userId, userId) || other.userId == userId)&&(identical(other.speciesId, speciesId) || other.speciesId == speciesId)&&(identical(other.zoneId, zoneId) || other.zoneId == zoneId)&&(identical(other.observedAt, observedAt) || other.observedAt == observedAt)&&(identical(other.latitude, latitude) || other.latitude == latitude)&&(identical(other.longitude, longitude) || other.longitude == longitude)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&const DeepCollectionEquality().equals(other.photoExifData, photoExifData)&&(identical(other.isFirstForUser, isFirstForUser) || other.isFirstForUser == isFirstForUser)&&(identical(other.pointsEarned, pointsEarned) || other.pointsEarned == pointsEarned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Observation&&(identical(other.id, id) || other.id == id)&&(identical(other.userId, userId) || other.userId == userId)&&(identical(other.speciesId, speciesId) || other.speciesId == speciesId)&&(identical(other.zoneId, zoneId) || other.zoneId == zoneId)&&(identical(other.observedAt, observedAt) || other.observedAt == observedAt)&&(identical(other.latitude, latitude) || other.latitude == latitude)&&(identical(other.longitude, longitude) || other.longitude == longitude)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&const DeepCollectionEquality().equals(other.photoExifData, photoExifData)&&(identical(other.isFirstForUser, isFirstForUser) || other.isFirstForUser == isFirstForUser)&&(identical(other.pointsEarned, pointsEarned) || other.pointsEarned == pointsEarned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.wasDailySpecies, wasDailySpecies) || other.wasDailySpecies == wasDailySpecies));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,userId,speciesId,zoneId,observedAt,latitude,longitude,photoUrl,const DeepCollectionEquality().hash(photoExifData),isFirstForUser,pointsEarned,createdAt);
+int get hashCode => Object.hash(runtimeType,id,userId,speciesId,zoneId,observedAt,latitude,longitude,photoUrl,const DeepCollectionEquality().hash(photoExifData),isFirstForUser,pointsEarned,createdAt,wasDailySpecies);
 
 @override
 String toString() {
-  return 'Observation(id: $id, userId: $userId, speciesId: $speciesId, zoneId: $zoneId, observedAt: $observedAt, latitude: $latitude, longitude: $longitude, photoUrl: $photoUrl, photoExifData: $photoExifData, isFirstForUser: $isFirstForUser, pointsEarned: $pointsEarned, createdAt: $createdAt)';
+  return 'Observation(id: $id, userId: $userId, speciesId: $speciesId, zoneId: $zoneId, observedAt: $observedAt, latitude: $latitude, longitude: $longitude, photoUrl: $photoUrl, photoExifData: $photoExifData, isFirstForUser: $isFirstForUser, pointsEarned: $pointsEarned, createdAt: $createdAt, wasDailySpecies: $wasDailySpecies)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $ObservationCopyWith<$Res>  {
   factory $ObservationCopyWith(Observation value, $Res Function(Observation) _then) = _$ObservationCopyWithImpl;
 @useResult
 $Res call({
- String id, String userId, String speciesId, String? zoneId, DateTime observedAt, double latitude, double longitude, String? photoUrl, Map<String, dynamic>? photoExifData, bool isFirstForUser, int pointsEarned, DateTime createdAt
+ String id, String userId, String speciesId, String? zoneId, DateTime observedAt, double latitude, double longitude, String? photoUrl, Map<String, dynamic>? photoExifData, bool isFirstForUser, int pointsEarned, DateTime createdAt, bool wasDailySpecies
 });
 
 
@@ -65,7 +65,7 @@ class _$ObservationCopyWithImpl<$Res>
 
 /// Create a copy of Observation
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? userId = null,Object? speciesId = null,Object? zoneId = freezed,Object? observedAt = null,Object? latitude = null,Object? longitude = null,Object? photoUrl = freezed,Object? photoExifData = freezed,Object? isFirstForUser = null,Object? pointsEarned = null,Object? createdAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? userId = null,Object? speciesId = null,Object? zoneId = freezed,Object? observedAt = null,Object? latitude = null,Object? longitude = null,Object? photoUrl = freezed,Object? photoExifData = freezed,Object? isFirstForUser = null,Object? pointsEarned = null,Object? createdAt = null,Object? wasDailySpecies = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,userId: null == userId ? _self.userId : userId // ignore: cast_nullable_to_non_nullable
@@ -79,7 +79,8 @@ as String?,photoExifData: freezed == photoExifData ? _self.photoExifData : photo
 as Map<String, dynamic>?,isFirstForUser: null == isFirstForUser ? _self.isFirstForUser : isFirstForUser // ignore: cast_nullable_to_non_nullable
 as bool,pointsEarned: null == pointsEarned ? _self.pointsEarned : pointsEarned // ignore: cast_nullable_to_non_nullable
 as int,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as DateTime,
+as DateTime,wasDailySpecies: null == wasDailySpecies ? _self.wasDailySpecies : wasDailySpecies // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 
@@ -164,10 +165,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String userId,  String speciesId,  String? zoneId,  DateTime observedAt,  double latitude,  double longitude,  String? photoUrl,  Map<String, dynamic>? photoExifData,  bool isFirstForUser,  int pointsEarned,  DateTime createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String userId,  String speciesId,  String? zoneId,  DateTime observedAt,  double latitude,  double longitude,  String? photoUrl,  Map<String, dynamic>? photoExifData,  bool isFirstForUser,  int pointsEarned,  DateTime createdAt,  bool wasDailySpecies)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Observation() when $default != null:
-return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observedAt,_that.latitude,_that.longitude,_that.photoUrl,_that.photoExifData,_that.isFirstForUser,_that.pointsEarned,_that.createdAt);case _:
+return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observedAt,_that.latitude,_that.longitude,_that.photoUrl,_that.photoExifData,_that.isFirstForUser,_that.pointsEarned,_that.createdAt,_that.wasDailySpecies);case _:
   return orElse();
 
 }
@@ -185,10 +186,10 @@ return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observe
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String userId,  String speciesId,  String? zoneId,  DateTime observedAt,  double latitude,  double longitude,  String? photoUrl,  Map<String, dynamic>? photoExifData,  bool isFirstForUser,  int pointsEarned,  DateTime createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String userId,  String speciesId,  String? zoneId,  DateTime observedAt,  double latitude,  double longitude,  String? photoUrl,  Map<String, dynamic>? photoExifData,  bool isFirstForUser,  int pointsEarned,  DateTime createdAt,  bool wasDailySpecies)  $default,) {final _that = this;
 switch (_that) {
 case _Observation():
-return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observedAt,_that.latitude,_that.longitude,_that.photoUrl,_that.photoExifData,_that.isFirstForUser,_that.pointsEarned,_that.createdAt);case _:
+return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observedAt,_that.latitude,_that.longitude,_that.photoUrl,_that.photoExifData,_that.isFirstForUser,_that.pointsEarned,_that.createdAt,_that.wasDailySpecies);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -205,10 +206,10 @@ return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observe
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String userId,  String speciesId,  String? zoneId,  DateTime observedAt,  double latitude,  double longitude,  String? photoUrl,  Map<String, dynamic>? photoExifData,  bool isFirstForUser,  int pointsEarned,  DateTime createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String userId,  String speciesId,  String? zoneId,  DateTime observedAt,  double latitude,  double longitude,  String? photoUrl,  Map<String, dynamic>? photoExifData,  bool isFirstForUser,  int pointsEarned,  DateTime createdAt,  bool wasDailySpecies)?  $default,) {final _that = this;
 switch (_that) {
 case _Observation() when $default != null:
-return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observedAt,_that.latitude,_that.longitude,_that.photoUrl,_that.photoExifData,_that.isFirstForUser,_that.pointsEarned,_that.createdAt);case _:
+return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observedAt,_that.latitude,_that.longitude,_that.photoUrl,_that.photoExifData,_that.isFirstForUser,_that.pointsEarned,_that.createdAt,_that.wasDailySpecies);case _:
   return null;
 
 }
@@ -220,7 +221,7 @@ return $default(_that.id,_that.userId,_that.speciesId,_that.zoneId,_that.observe
 @JsonSerializable()
 
 class _Observation implements Observation {
-  const _Observation({required this.id, required this.userId, required this.speciesId, this.zoneId, required this.observedAt, required this.latitude, required this.longitude, this.photoUrl, final  Map<String, dynamic>? photoExifData, required this.isFirstForUser, required this.pointsEarned, required this.createdAt}): _photoExifData = photoExifData;
+  const _Observation({required this.id, required this.userId, required this.speciesId, this.zoneId, required this.observedAt, required this.latitude, required this.longitude, this.photoUrl, final  Map<String, dynamic>? photoExifData, required this.isFirstForUser, required this.pointsEarned, required this.createdAt, this.wasDailySpecies = false}): _photoExifData = photoExifData;
   factory _Observation.fromJson(Map<String, dynamic> json) => _$ObservationFromJson(json);
 
 @override final  String id;
@@ -243,6 +244,7 @@ class _Observation implements Observation {
 @override final  bool isFirstForUser;
 @override final  int pointsEarned;
 @override final  DateTime createdAt;
+@override@JsonKey() final  bool wasDailySpecies;
 
 /// Create a copy of Observation
 /// with the given fields replaced by the non-null parameter values.
@@ -257,16 +259,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Observation&&(identical(other.id, id) || other.id == id)&&(identical(other.userId, userId) || other.userId == userId)&&(identical(other.speciesId, speciesId) || other.speciesId == speciesId)&&(identical(other.zoneId, zoneId) || other.zoneId == zoneId)&&(identical(other.observedAt, observedAt) || other.observedAt == observedAt)&&(identical(other.latitude, latitude) || other.latitude == latitude)&&(identical(other.longitude, longitude) || other.longitude == longitude)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&const DeepCollectionEquality().equals(other._photoExifData, _photoExifData)&&(identical(other.isFirstForUser, isFirstForUser) || other.isFirstForUser == isFirstForUser)&&(identical(other.pointsEarned, pointsEarned) || other.pointsEarned == pointsEarned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Observation&&(identical(other.id, id) || other.id == id)&&(identical(other.userId, userId) || other.userId == userId)&&(identical(other.speciesId, speciesId) || other.speciesId == speciesId)&&(identical(other.zoneId, zoneId) || other.zoneId == zoneId)&&(identical(other.observedAt, observedAt) || other.observedAt == observedAt)&&(identical(other.latitude, latitude) || other.latitude == latitude)&&(identical(other.longitude, longitude) || other.longitude == longitude)&&(identical(other.photoUrl, photoUrl) || other.photoUrl == photoUrl)&&const DeepCollectionEquality().equals(other._photoExifData, _photoExifData)&&(identical(other.isFirstForUser, isFirstForUser) || other.isFirstForUser == isFirstForUser)&&(identical(other.pointsEarned, pointsEarned) || other.pointsEarned == pointsEarned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.wasDailySpecies, wasDailySpecies) || other.wasDailySpecies == wasDailySpecies));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,userId,speciesId,zoneId,observedAt,latitude,longitude,photoUrl,const DeepCollectionEquality().hash(_photoExifData),isFirstForUser,pointsEarned,createdAt);
+int get hashCode => Object.hash(runtimeType,id,userId,speciesId,zoneId,observedAt,latitude,longitude,photoUrl,const DeepCollectionEquality().hash(_photoExifData),isFirstForUser,pointsEarned,createdAt,wasDailySpecies);
 
 @override
 String toString() {
-  return 'Observation(id: $id, userId: $userId, speciesId: $speciesId, zoneId: $zoneId, observedAt: $observedAt, latitude: $latitude, longitude: $longitude, photoUrl: $photoUrl, photoExifData: $photoExifData, isFirstForUser: $isFirstForUser, pointsEarned: $pointsEarned, createdAt: $createdAt)';
+  return 'Observation(id: $id, userId: $userId, speciesId: $speciesId, zoneId: $zoneId, observedAt: $observedAt, latitude: $latitude, longitude: $longitude, photoUrl: $photoUrl, photoExifData: $photoExifData, isFirstForUser: $isFirstForUser, pointsEarned: $pointsEarned, createdAt: $createdAt, wasDailySpecies: $wasDailySpecies)';
 }
 
 
@@ -277,7 +279,7 @@ abstract mixin class _$ObservationCopyWith<$Res> implements $ObservationCopyWith
   factory _$ObservationCopyWith(_Observation value, $Res Function(_Observation) _then) = __$ObservationCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String userId, String speciesId, String? zoneId, DateTime observedAt, double latitude, double longitude, String? photoUrl, Map<String, dynamic>? photoExifData, bool isFirstForUser, int pointsEarned, DateTime createdAt
+ String id, String userId, String speciesId, String? zoneId, DateTime observedAt, double latitude, double longitude, String? photoUrl, Map<String, dynamic>? photoExifData, bool isFirstForUser, int pointsEarned, DateTime createdAt, bool wasDailySpecies
 });
 
 
@@ -294,7 +296,7 @@ class __$ObservationCopyWithImpl<$Res>
 
 /// Create a copy of Observation
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? userId = null,Object? speciesId = null,Object? zoneId = freezed,Object? observedAt = null,Object? latitude = null,Object? longitude = null,Object? photoUrl = freezed,Object? photoExifData = freezed,Object? isFirstForUser = null,Object? pointsEarned = null,Object? createdAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? userId = null,Object? speciesId = null,Object? zoneId = freezed,Object? observedAt = null,Object? latitude = null,Object? longitude = null,Object? photoUrl = freezed,Object? photoExifData = freezed,Object? isFirstForUser = null,Object? pointsEarned = null,Object? createdAt = null,Object? wasDailySpecies = null,}) {
   return _then(_Observation(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,userId: null == userId ? _self.userId : userId // ignore: cast_nullable_to_non_nullable
@@ -308,7 +310,8 @@ as String?,photoExifData: freezed == photoExifData ? _self._photoExifData : phot
 as Map<String, dynamic>?,isFirstForUser: null == isFirstForUser ? _self.isFirstForUser : isFirstForUser // ignore: cast_nullable_to_non_nullable
 as bool,pointsEarned: null == pointsEarned ? _self.pointsEarned : pointsEarned // ignore: cast_nullable_to_non_nullable
 as int,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as DateTime,
+as DateTime,wasDailySpecies: null == wasDailySpecies ? _self.wasDailySpecies : wasDailySpecies // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 

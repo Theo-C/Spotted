@@ -86,6 +86,8 @@ class BadgesSection extends ConsumerWidget {
         BadgeCategory.rarity => 'Rareté',
         BadgeCategory.photo => 'Photographe',
         BadgeCategory.streak => 'Série',
+        BadgeCategory.collection => 'Collections',
+        BadgeCategory.mystery => 'Mystères',
       };
 }
 
@@ -112,13 +114,16 @@ class _BadgeGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 4 colonnes + tiles plus carrées → ~40% de hauteur en moins vs 3 col.
+    // Nécessaire depuis l'ajout de 4 collection + 3 mystères (28 badges au
+    // total), sinon la section badges bouffait tout l'écran du Profil.
     return GridView.count(
-      crossAxisCount: 3,
+      crossAxisCount: 4,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 0.82,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 0.88,
       children: [
         for (final s in items) _BadgeTile(status: s),
       ],
@@ -130,19 +135,24 @@ class _BadgeTile extends StatelessWidget {
   const _BadgeTile({required this.status});
   final BadgeStatus status;
 
+  /// True quand on doit masquer icône/nom/description : badge marqué comme
+  /// mystère ET pas encore débloqué. Sinon on révèle tout comme d'habitude.
+  bool get _isMasked => status.def.isHidden && !status.isEarned;
+
   @override
   Widget build(BuildContext context) {
     final earned = status.isEarned;
+    final masked = _isMasked;
     final pct = status.progress.value.clamp(0.0, 1.0);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       onTap: () => _showDetail(context),
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
           color: earned ? surfaceCard : surfaceMuted,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: earned
                 ? gold.withValues(alpha: 0.6)
@@ -153,7 +163,7 @@ class _BadgeTile extends StatelessWidget {
               ? [
                   BoxShadow(
                     color: gold.withValues(alpha: 0.15),
-                    blurRadius: 10,
+                    blurRadius: 8,
                   ),
                 ]
               : null,
@@ -161,37 +171,49 @@ class _BadgeTile extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              status.def.icon,
-              style: TextStyle(
-                fontSize: 30,
-                color: earned ? null : textMuted.withValues(alpha: 0.5),
+            // Mystère : icône atmosphérique dédiée (hiddenIcon) avec une
+            // opacité réduite. Fallback ✨ si l'auteur du badge a oublié
+            // d'en fournir une. On évite le cadenas Material qui rendait
+            // la grille très générique.
+            Opacity(
+              opacity: masked ? 0.55 : (earned ? 1.0 : 0.5),
+              child: Text(
+                masked
+                    ? (status.def.hiddenIcon ?? '✨')
+                    : status.def.icon,
+                style: const TextStyle(fontSize: 22),
               ),
             ),
             Text(
-              status.def.name,
+              masked ? 'Mystère' : status.def.name,
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: GoogleFonts.karla(
-                fontSize: 10,
+                fontSize: 8.5,
                 fontWeight: FontWeight.w600,
                 color: earned ? forestGreen : textSecondary,
+                fontStyle: masked ? FontStyle.italic : FontStyle.normal,
                 height: 1.15,
               ),
             ),
             if (earned)
-              const Icon(Icons.check_circle, size: 14, color: forestGreen)
+              const Icon(Icons.check_circle, size: 12, color: forestGreen)
             else
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: pct,
-                  minHeight: 3,
-                  backgroundColor: textMuted.withValues(alpha: 0.2),
-                  valueColor: const AlwaysStoppedAnimation<Color>(terracotta),
-                ),
-              ),
+              // Sur un mystère, la barre trahirait la difficulté. On la
+              // masque totalement pour préserver la surprise.
+              masked
+                  ? const SizedBox(height: 2)
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: pct,
+                        minHeight: 2.5,
+                        backgroundColor: textMuted.withValues(alpha: 0.2),
+                        valueColor:
+                            const AlwaysStoppedAnimation<Color>(terracotta),
+                      ),
+                    ),
           ],
         ),
       ),
@@ -203,17 +225,26 @@ class _BadgeTile extends StatelessWidget {
       context: context,
       backgroundColor: surfaceBase,
       useRootNavigator: false,
+      // Material 3 cappe la largeur des bottom sheets à 640 par défaut, ce
+      // qui laisse des marges "vides" sur les côtés selon la taille du texte
+      // affiché. On dé-cappe ici pour occuper toute la largeur.
+      constraints: const BoxConstraints(),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (_) => SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
+        child: SizedBox(
+          // Ceinture + bretelles : force full-width même si les enfants sont
+          // narrow (Column avec crossAxisAlignment.center peut sinon rendre
+          // le container tributaire de la largeur du plus large enfant).
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
               Container(
                 width: 40,
                 height: 4,
@@ -223,28 +254,38 @@ class _BadgeTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 18),
-              Text(
-                status.def.icon,
-                style: const TextStyle(fontSize: 56),
+              Opacity(
+                opacity: _isMasked ? 0.6 : 1.0,
+                child: Text(
+                  _isMasked
+                      ? (status.def.hiddenIcon ?? '✨')
+                      : status.def.icon,
+                  style: const TextStyle(fontSize: 56),
+                ),
               ),
               const SizedBox(height: 10),
               Text(
-                status.def.name,
+                _isMasked ? 'Badge mystère' : status.def.name,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.cormorantGaramond(
                   fontSize: 24,
                   fontWeight: FontWeight.w600,
+                  fontStyle: _isMasked ? FontStyle.italic : FontStyle.normal,
                   color: forestGreen,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                status.def.description,
+                _isMasked
+                    ? (status.def.hiddenHint ??
+                        'Continue à observer — il se dévoilera au bon moment.')
+                    : status.def.description,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.karla(
                   fontSize: 13,
                   color: textPrimary,
                   height: 1.4,
+                  fontStyle: _isMasked ? FontStyle.italic : FontStyle.normal,
                 ),
               ),
               const SizedBox(height: 16),
@@ -266,7 +307,7 @@ class _BadgeTile extends StatelessWidget {
                     ),
                   ),
                 )
-              else ...[
+              else if (!_isMasked) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
@@ -288,6 +329,7 @@ class _BadgeTile extends StatelessWidget {
                   ),
               ],
             ],
+            ),
           ),
         ),
       ),

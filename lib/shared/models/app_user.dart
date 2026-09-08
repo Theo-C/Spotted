@@ -12,6 +12,8 @@ abstract class AppUser with _$AppUser {
     required String pseudo,
     required String colorAccent,
     required DateTime createdAt,
+    @Default(false) bool isAdmin,
+    @Default(false) bool profileCompleted,
   }) = _AppUser;
 
   factory AppUser.fromJson(Map<String, dynamic> json) =>

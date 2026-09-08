@@ -221,26 +221,53 @@ class _SpeciesEditorScreenState extends ConsumerState<SpeciesEditorScreen> {
               .eq('zone_id', oise.id);
         }
       } else {
-        // CREATE
-        final created = await ref.read(speciesRepositoryProvider).create(
-              commonName: cn,
-              scientificName: sn,
-              categoryId: _selectedCategoryId!,
-              description: desc,
-              tips: tipsText,
-              photoUrl: photoUrl,
-            );
-        speciesId = created.id;
-        // Une ligne species_zones par territoire coché, même rareté pour tous
-        // (l'user pourra ajuster par territoire plus tard via l'édition).
-        final inserts = _selectedZoneIds
-            .map((zid) => {
-                  'species_id': speciesId,
-                  'zone_id': zid,
-                  'rarity': _selectedRarity.name,
-                })
-            .toList();
-        await client.from('species_zones').insert(inserts);
+        // CREATE ou LINK selon si l'espèce existe déjà au catalogue.
+        // Si oui (typiquement : Lanius collurio déjà dans Oise, user veut
+        // l'ajouter à Aisne), on ne re-crée pas — on ajoute simplement les
+        // liens species_zones manquants. Description / tips / photo de
+        // l'espèce d'origine ne sont pas écrasés (fields immuables une fois
+        // au catalogue, cohérent avec le mode édition qui verrouille aussi).
+        final repo = ref.read(speciesRepositoryProvider);
+        final existing = await repo.getByScientificName(sn);
+        if (existing != null) {
+          final alreadyLinked = await repo.getZoneIdsForSpecies(existing.id);
+          final toAdd = _selectedZoneIds.difference(alreadyLinked);
+          if (toAdd.isEmpty) {
+            setState(() {
+              _submitting = false;
+              _error =
+                  "Cette espèce est déjà présente sur tous les territoires cochés.";
+            });
+            return;
+          }
+          final inserts = toAdd
+              .map((zid) => {
+                    'species_id': existing.id,
+                    'zone_id': zid,
+                    'rarity': _selectedRarity.name,
+                  })
+              .toList();
+          await client.from('species_zones').insert(inserts);
+          speciesId = existing.id;
+        } else {
+          final created = await ref.read(speciesRepositoryProvider).create(
+                commonName: cn,
+                scientificName: sn,
+                categoryId: _selectedCategoryId!,
+                description: desc,
+                tips: tipsText,
+                photoUrl: photoUrl,
+              );
+          speciesId = created.id;
+          final inserts = _selectedZoneIds
+              .map((zid) => {
+                    'species_id': speciesId,
+                    'zone_id': zid,
+                    'rarity': _selectedRarity.name,
+                  })
+              .toList();
+          await client.from('species_zones').insert(inserts);
+        }
       }
 
       // Invalide les caches qui dépendent du catalogue.
@@ -740,3 +767,4 @@ class _RarityPicker extends StatelessWidget {
         Rarity.legendary => rarityLegendary,
       };
 }
+

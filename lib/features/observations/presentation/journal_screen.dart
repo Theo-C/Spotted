@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 // Mapbox SDK exporte un type `Size` qui shadow celui de Flutter — on l'écarte
@@ -12,7 +14,6 @@ import '../../../core/services/location_service.dart';
 import '../../../core/utils/category_icons.dart';
 import '../../../shared/models/category.dart' as model;
 import '../../../shared/models/rarity.dart';
-import '../../../shared/providers/observer_provider.dart';
 import '../../territories/data/category_repository.dart';
 import '../data/observations_for_map_provider.dart';
 import 'observation_detail_sheet.dart';
@@ -42,7 +43,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   // Filtres (null = pas de filtre).
   String? _categoryFilter;
   Rarity? _rarityFilter;
-  String? _observerFilter;
 
   /// État de la barre de filtres (collapsed par défaut pour ne pas bouffer
   /// 110 px de carte comme avant).
@@ -62,10 +62,40 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   /// Sans ça, chaque ajout d'obs ré-écraserait le pan/zoom manuel de l'user.
   bool _didInitialFit = false;
 
+  /// Cache du dernier payload GeoJSON poussé dans la source — permet de
+  /// skip un `setStyleSourceProperty` si les données n'ont pas changé.
+  /// Utile au boot : `_onStyleLoaded` peut fire 2× sur Android + `ref.listen`
+  /// peut re-notifier sur émissions dupliquées de `allObservationsForMapProvider`
+  /// (le provider dépend de `currentAuthUserProvider` qui peut émettre 2×
+  /// au démarrage). Sans dédup, chaque push re-render tous les layers → flicker.
+  String? _lastPushedGeoJson;
+
+  /// True quand le style Mapbox est chargé, les layers ajoutés et le 1er
+  /// push de données terminé — à partir de là on peut fade l'overlay de
+  /// masquage. Avant, on cache tout (l'user voit un fond crème stable au
+  /// lieu du chargement chaotique des tiles + des ajouts de layers).
+  bool _mapReady = false;
+
+  /// Obs mise en avant après un tap depuis la fiche espèce. Reste affichée en
+  /// callout en bas de l'écran jusqu'à ce que l'user la ferme (pas d'auto-
+  /// dismiss — utile pour se réorienter dans les alentours à son rythme).
+  ObservationOnMap? _focusedItem;
+
   static const _sourceId = 'obs';
   static const _layerClusters = 'obs-clusters';
   static const _layerClusterCount = 'obs-cluster-count';
   static const _layerPoint = 'obs-point';
+
+  /// Layer du halo doré autour du point focusé — sur la source PARTAGÉE
+  /// (clustered). Combiné à `['!', ['has', 'point_count']]` dans son filtre,
+  /// il ne rend QUE quand le point est individuel (non-clusterisé), pareil
+  /// que _layerPoint. Résultat : le halo disparaît/réapparaît en même temps
+  /// que le point cible, sans seuil zoom hardcodé.
+  static const _layerFocusHalo = 'obs-focus-halo';
+
+  /// Sentinelle utilisée dans le filtre du halo quand aucune obs n'est
+  /// focusée — aucune obs n'aura jamais cet id, donc le layer rend rien.
+  static const _noMatchObsId = '__none__';
 
   @override
   void initState() {
@@ -149,6 +179,48 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       ));
     }
 
+    // Nettoyage UNIQUEMENT si on détecte les vestiges d'une version
+    // antérieure : source dédiée 'obs-focus' présente = ancien layer
+    // (avec source dédiée + minZoom hardcodé). On remove les 2 pour
+    // re-créer proprement en dessous.
+    //
+    // Sans ce garde, `_onStyleLoaded` remove+re-add le halo à chaque fire
+    // (Android fire 2× au boot cf. comment plus haut, plus à chaque switch
+    // de style de carte) → flicker visible sur le halo entre remove et add.
+    try {
+      if (await map.style.styleSourceExists('obs-focus')) {
+        if (await map.style.styleLayerExists(_layerFocusHalo)) {
+          await map.style.removeStyleLayer(_layerFocusHalo);
+        }
+        await map.style.removeStyleSource('obs-focus');
+      }
+    } catch (_) {}
+
+    // Layer du halo focus — sur la source PARTAGÉE, ajouté AVANT le point
+    // pour rendre DESSOUS (le point coloré rareté reste au-dessus, lisible).
+    // Filtre initial = `!point_count && obs_id == sentinel` : ne matche rien
+    // par défaut. Update via setStyleLayerProperty quand une obs est focusée.
+    // Comme le filtre inclut `!has point_count`, le halo suit exactement la
+    // visibilité du _layerPoint (masqué en cluster, visible en individuel).
+    // Idempotent : si le layer existe déjà (2ème fire de _onStyleLoaded), skip.
+    if (!await map.style.styleLayerExists(_layerFocusHalo)) {
+      await map.style.addLayer(CircleLayer(
+        id: _layerFocusHalo,
+        sourceId: _sourceId,
+        filter: [
+          'all',
+          ['!', ['has', 'point_count']],
+          ['==', ['get', 'obs_id'], _noMatchObsId],
+        ],
+        // Gold — vocabulaire "récompense/focus" de l'app.
+        circleRadius: 22,
+        circleColor: 0xFFC49120,
+        circleOpacity: 0.25,
+        circleStrokeColor: 0xFFC49120,
+        circleStrokeWidth: 3,
+      ));
+    }
+
     final pointExists = await map.style.styleLayerExists(_layerPoint);
     if (!pointExists) {
       await map.style.addLayer(CircleLayer(
@@ -172,6 +244,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
 
     // Pousse les données courantes (filtre appliqué).
     await _refreshSource();
+
+    // Style + layers OK, data poussée → on peut lever le voile de masquage.
+    // Petit délai pour laisser Mapbox terminer le rendu de ses tiles avant
+    // le fade — sinon on révèle une carte encore en train de se dessiner
+    // (les clignotements résiduels au boot venaient de là). 500 ms est un
+    // sweet spot : imperceptible en usage, laisse le moteur GL se stabiliser.
+    // setState idempotent : safe même si _onStyleLoaded fire 2× sur Android.
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (mounted && !_mapReady) {
+      setState(() => _mapReady = true);
+    }
   }
 
   /// Recalcule la GeoJSON FeatureCollection à partir du provider et la pousse
@@ -207,6 +290,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       'features': features,
     });
 
+    // Skip si identique à la dernière push — évite le re-render inutile
+    // des layers (source d'un flicker visible au boot avec appels redondants).
+    if (geoJson == _lastPushedGeoJson) return;
+    _lastPushedGeoJson = geoJson;
+
     await map.style.setStyleSourceProperty(_sourceId, 'data', geoJson);
 
     // Au tout 1er render non-vide on recentre la caméra sur l'enveloppe des
@@ -216,6 +304,78 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       _didInitialFit = true;
       await _fitVisibleBounds(animated: false);
     }
+
+    // Un focus a pu être posé par la fiche espèce AVANT que la map soit
+    // prête / les obs chargées — on le consomme dès qu'on peut.
+    await _consumeFocusedObservationIfAny();
+  }
+
+  /// Si [focusedObservationIdProvider] est set et que l'obs correspondante
+  /// est chargée, on flyTo dessus et on affiche un callout persistant en bas
+  /// de l'écran (pas de sheet — le user a déjà vu le détail sur la fiche
+  /// espèce, ré-ouvrir serait redondant). Reset le provider en one-shot.
+  Future<void> _consumeFocusedObservationIfAny() async {
+    final map = _map;
+    if (map == null || !mounted) return;
+    final id = ref.read(focusedObservationIdProvider);
+    if (id == null) return;
+    final item = _byObsId[id];
+    if (item == null) return; // Obs pas encore dans l'index → réessai plus tard.
+
+    ref.read(focusedObservationIdProvider.notifier).state = null;
+
+    await map.flyTo(
+      CameraOptions(
+        center: Point(
+          coordinates: Position(item.obs.longitude, item.obs.latitude),
+        ),
+        // Zoom 15 (vs clusterMaxZoom=14) pour garantir que l'obs est
+        // dé-clusterisée et que le halo peut la cibler individuellement.
+        zoom: 15,
+      ),
+      MapAnimationOptions(duration: 500),
+    );
+    if (!mounted) return;
+    setState(() => _focusedItem = item);
+    await _syncFocusHalo();
+  }
+
+  /// Met à jour le filtre du layer halo pour cibler l'obs [_focusedItem],
+  /// ou la sentinelle "aucune" si null. Le filtre `!point_count` reste
+  /// toujours actif → le halo suit naturellement la visibilité du point
+  /// (masqué en cluster, visible en individuel, sans zoom hardcodé).
+  Future<void> _syncFocusHalo() async {
+    final map = _map;
+    if (map == null) return;
+    final targetId = _focusedItem?.obs.id ?? _noMatchObsId;
+    final filter = [
+      'all',
+      ['!', ['has', 'point_count']],
+      ['==', ['get', 'obs_id'], targetId],
+    ];
+    try {
+      await map.style.setStyleLayerProperty(
+        _layerFocusHalo,
+        'filter',
+        jsonEncode(filter),
+      );
+    } catch (_) {
+      // Silent — layer pas prêt (rare, avant _onStyleLoaded).
+    }
+  }
+
+  /// Ouvre le sheet de détail pour l'obs mise en avant. Appelé depuis la
+  /// callout — la callout reste visible en dessous du sheet, ce qui permet
+  /// de refermer le sheet et retrouver la carte centrée sans perdre le contexte.
+  Future<void> _openFocusedDetail(ObservationOnMap item) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: surfaceBase,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => ObservationDetailSheet(item: item),
+    );
   }
 
   String _emptyGeoJson() => jsonEncode({
@@ -258,7 +418,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
         return;
       }
       if (layers.contains(_layerPoint)) {
-        await _openPointDetail(feature);
+        _openPointDetail(feature);
         return;
       }
     }
@@ -289,20 +449,19 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     );
   }
 
-  Future<void> _openPointDetail(Map<Object?, Object?> feature) async {
+  void _openPointDetail(Map<Object?, Object?> feature) {
     final props = (feature['properties'] as Map?)?.cast<String, Object?>();
     final obsId = props?['obs_id'] as String?;
     if (obsId == null) return;
     final item = _byObsId[obsId];
     if (item == null || !mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: surfaceBase,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) => ObservationDetailSheet(item: item),
-    );
+    // Comportement uniforme quel que soit le point d'entrée (tap direct sur
+    // un point OU arrivée depuis la fiche espèce) : on affiche la callout +
+    // le halo, et l'user tape la callout pour ouvrir le sheet. Évite le
+    // "double effet" tap = ouvre modal + laisse le focus, où l'user perd
+    // la carte sous les yeux dès qu'il touche un point.
+    setState(() => _focusedItem = item);
+    unawaited(_syncFocusHalo());
   }
 
   // -------------------------------------------------------------
@@ -416,22 +575,16 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       return false;
     }
     if (_rarityFilter != null && item.rarity != _rarityFilter) return false;
-    if (_observerFilter != null && item.obs.userId != _observerFilter) {
-      return false;
-    }
     return true;
   }
 
   bool get _hasActiveFilter =>
-      _categoryFilter != null ||
-      _rarityFilter != null ||
-      _observerFilter != null;
+      _categoryFilter != null || _rarityFilter != null;
 
   void _clearFilters() {
     setState(() {
       _categoryFilter = null;
       _rarityFilter = null;
-      _observerFilter = null;
     });
     _refreshSource();
   }
@@ -446,11 +599,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     _refreshSource();
   }
 
-  void _setObserverFilter(String? id) {
-    setState(() => _observerFilter = id);
-    _refreshSource();
-  }
-
   // -------------------------------------------------------------
   // build
   // -------------------------------------------------------------
@@ -460,6 +608,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     // Re-render à chaque changement du provider d'obs.
     ref.listen(allObservationsForMapProvider, (_, _) {
       _refreshSource();
+    });
+    // Focus depuis la fiche espèce → on tente immédiatement (utile si l'user
+    // revient sur le carnet alors qu'il est déjà mount et que la map est
+    // prête). Sinon _refreshSource s'en occupera au prochain refresh.
+    ref.listen<String?>(focusedObservationIdProvider, (_, next) {
+      if (next != null) _consumeFocusedObservationIfAny();
     });
 
     final allItems =
@@ -485,6 +639,67 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
             onMapCreated: _onMapCreated,
             onStyleLoadedListener: _onStyleLoaded,
           ),
+          // Voile de masquage au boot — cache les micro-flashs de chargement
+          // Mapbox (tiles CDN, ajouts de layers en cascade, 2 fires
+          // possibles de _onStyleLoaded). Fade out une fois _mapReady bascule
+          // après le 1er _refreshSource complet. IgnorePointer pour ne pas
+          // bloquer les gestures une fois transparent.
+          IgnorePointer(
+            ignoring: _mapReady,
+            child: AnimatedOpacity(
+              opacity: _mapReady ? 0 : 1,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOut,
+              child: Container(
+                color: surfaceBase,
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Longue-vue statique — évoque le naturaliste qui
+                    // scrute l'horizon, cohérent avec la DA naturaliste.
+                    const Text('🔭', style: TextStyle(fontSize: 84)),
+                    const SizedBox(height: 24),
+                    // Shimmer terracotta sur le label pour marquer le "je
+                    // travaille" sans avoir besoin d'un spinner en plus.
+                    Text(
+                      'CHARGEMENT DE LA CARTE…',
+                      style: GoogleFonts.karla(
+                        fontSize: 15,
+                        letterSpacing: 3,
+                        fontWeight: FontWeight.bold,
+                        color: textSecondary,
+                      ),
+                    )
+                        .animate(onPlay: (c) => c.repeat())
+                        .shimmer(
+                          duration: const Duration(milliseconds: 1600),
+                          color: terracotta.withValues(alpha: 0.6),
+                        ),
+                    const SizedBox(height: 20),
+                    // Trace d'empreintes qui se posent une à une, comme un
+                    // animal qui passe. Chaque patte est décalée + inclinée
+                    // pour simuler une vraie foulée (gauche/droite/gauche…).
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        _PawPrint(delayMs: 0, tiltDeg: -0.15),
+                        SizedBox(width: 10),
+                        _PawPrint(delayMs: 300, tiltDeg: 0.15),
+                        SizedBox(width: 10),
+                        _PawPrint(delayMs: 600, tiltDeg: -0.15),
+                        SizedBox(width: 10),
+                        _PawPrint(delayMs: 900, tiltDeg: 0.15),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Halo natif via CircleAnnotationManager — le rendu se fait côté
+          // GL natif Mapbox, suit la carte automatiquement sans aucun bridge
+          // Dart pendant les pans/zooms.
           Positioned(
             top: 8,
             left: 12,
@@ -494,13 +709,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
               onToggle: () => setState(() => _filtersOpen = !_filtersOpen),
               categoryFilter: _categoryFilter,
               rarityFilter: _rarityFilter,
-              observerFilter: _observerFilter,
               visibleCount: visibleCount,
               totalCount: allItems.length,
               hasActiveFilter: _hasActiveFilter,
               onCategoryChanged: _setCategoryFilter,
               onRarityChanged: _setRarityFilter,
-              onObserverChanged: _setObserverFilter,
               onClearAll: _clearFilters,
             ),
           ),
@@ -530,7 +743,190 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
               ],
             ),
           ),
+          // Callout "cette obs" — collée en bas pour ne couvrir la carte
+          // qu'au minimum. Marge droite pour laisser respirer les 3 boutons
+          // flottants. Tap sur le corps → rouvre le sheet de détail. Le × à
+          // droite est la seule action qui masque la callout.
+          if (_focusedItem != null)
+            Positioned(
+              left: 12,
+              right: 72,
+              bottom: 16,
+              child: _FocusedObsCallout(
+                item: _focusedItem!,
+                onOpen: () => _openFocusedDetail(_focusedItem!),
+                onClose: () {
+                  setState(() => _focusedItem = null);
+                  // Retire l'annotation halo — asynchrone mais rapide,
+                  // pas besoin d'await ici (setState suffit pour la callout).
+                  unawaited(_syncFocusHalo());
+                },
+              ),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// Bandeau flottant qui rappelle à l'user quelle obs est actuellement mise
+/// en avant sur la carte (arrivée depuis la fiche espèce).
+///
+/// Deux zones tactiles distinctes :
+///   - corps (icône + textes)         → rouvre le sheet de détail
+///   - bouton × (droite)              → ferme la callout (seule sortie)
+///
+/// Callout basse : nom d'espèce + CTA insistant "OUVRIR L'OBSERVATION →".
+/// Deux zones tactiles : corps (ouvre le sheet) et × (ferme la callout).
+/// Choix UX : le tap "body" ne ferme pas — sinon l'user qui veut ouvrir se
+/// coince à la fermer par erreur. On force l'action explicite via ×.
+class _FocusedObsCallout extends StatelessWidget {
+  const _FocusedObsCallout({
+    required this.item,
+    required this.onOpen,
+    required this.onClose,
+  });
+
+  final ObservationOnMap item;
+  final VoidCallback onOpen;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final species = item.species;
+    return Material(
+      color: surfaceBase,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: forestGreen, width: 1.5),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(16),
+                ),
+                onTap: onOpen,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.place, color: terracotta, size: 22),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        // AnimatedSwitcher : quand l'user tape un autre
+                        // point, le contenu (nom d'espèce + CTA) fait un
+                        // fade + slide horizontal court, donnant un vrai
+                        // signal "ça a changé" au lieu d'un swap muet.
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          switchInCurve: Curves.easeOut,
+                          switchOutCurve: Curves.easeIn,
+                          transitionBuilder: (child, animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0.12, 0),
+                                  end: Offset.zero,
+                                ).animate(animation),
+                                child: child,
+                              ),
+                            );
+                          },
+                          layoutBuilder: (current, previous) => Stack(
+                            alignment: Alignment.centerLeft,
+                            children: [
+                              ...previous,
+                              ?current,
+                            ],
+                          ),
+                          child: Column(
+                            // Key = obs.id : change de key = AnimatedSwitcher
+                            // détecte un nouveau child et anime la transition.
+                            key: ValueKey(item.obs.id),
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                species?.commonName ?? 'Observation',
+                                style: GoogleFonts.cormorantGaramond(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                  color: forestGreen,
+                                  height: 1.1,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    "OUVRIR L'OBSERVATION",
+                                    style: GoogleFonts.karla(
+                                      fontSize: 10.5,
+                                      letterSpacing: 1.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: terracotta,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // Chevron avec nudge horizontal en boucle —
+                                  // capte le regard vers l'action sans être
+                                  // agressif (700ms aller-retour, easeInOut).
+                                  const Icon(
+                                    Icons.arrow_forward,
+                                    size: 14,
+                                    color: terracotta,
+                                  )
+                                      .animate(
+                                          onPlay: (c) =>
+                                              c.repeat(reverse: true))
+                                      .moveX(
+                                        begin: 0,
+                                        end: 4,
+                                        duration: const Duration(
+                                            milliseconds: 700),
+                                        curve: Curves.easeInOut,
+                                      ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              width: 1,
+              height: 40,
+              color: const Color(0xFFE8E0CE),
+            ),
+            InkWell(
+              borderRadius: const BorderRadius.horizontal(
+                right: Radius.circular(16),
+              ),
+              onTap: onClose,
+              child: const SizedBox(
+                width: 44,
+                height: 60,
+                child: Icon(Icons.close, size: 20, color: textMuted),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -583,13 +979,11 @@ class _FiltersBar extends ConsumerWidget {
     required this.onToggle,
     required this.categoryFilter,
     required this.rarityFilter,
-    required this.observerFilter,
     required this.visibleCount,
     required this.totalCount,
     required this.hasActiveFilter,
     required this.onCategoryChanged,
     required this.onRarityChanged,
-    required this.onObserverChanged,
     required this.onClearAll,
   });
 
@@ -597,13 +991,11 @@ class _FiltersBar extends ConsumerWidget {
   final VoidCallback onToggle;
   final String? categoryFilter;
   final Rarity? rarityFilter;
-  final String? observerFilter;
   final int visibleCount;
   final int totalCount;
   final bool hasActiveFilter;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Rarity?> onRarityChanged;
-  final ValueChanged<String?> onObserverChanged;
   final VoidCallback onClearAll;
 
   @override
@@ -703,10 +1095,8 @@ class _FiltersBar extends ConsumerWidget {
                   ? _FiltersBody(
                       categoryFilter: categoryFilter,
                       rarityFilter: rarityFilter,
-                      observerFilter: observerFilter,
                       onCategoryChanged: onCategoryChanged,
                       onRarityChanged: onRarityChanged,
-                      onObserverChanged: onObserverChanged,
                     )
                   : const SizedBox(width: double.infinity),
             ),
@@ -721,23 +1111,18 @@ class _FiltersBody extends ConsumerWidget {
   const _FiltersBody({
     required this.categoryFilter,
     required this.rarityFilter,
-    required this.observerFilter,
     required this.onCategoryChanged,
     required this.onRarityChanged,
-    required this.onObserverChanged,
   });
 
   final String? categoryFilter;
   final Rarity? rarityFilter;
-  final String? observerFilter;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Rarity?> onRarityChanged;
-  final ValueChanged<String?> onObserverChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final categoriesAsync = ref.watch(_categoriesProvider);
-    final observersAsync = ref.watch(observersProvider);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
       child: Column(
@@ -778,29 +1163,6 @@ class _FiltersBody extends ConsumerWidget {
                   onTap: () => onRarityChanged(r),
                 ),
             ],
-          ),
-          const SizedBox(height: 4),
-          observersAsync.when(
-            loading: () => const SizedBox(height: 28),
-            error: (_, _) => const SizedBox.shrink(),
-            data: (users) => _ChipsRow(
-              children: [
-                _FilterChip(
-                  label: 'Tous obs.',
-                  selected: observerFilter == null,
-                  onTap: () => onObserverChanged(null),
-                ),
-                for (final u in users)
-                  _FilterChip(
-                    label: u.pseudo,
-                    selected: observerFilter == u.id,
-                    color: Color(
-                      int.parse(u.colorAccent.replaceFirst('#', '0xFF')),
-                    ),
-                    onTap: () => onObserverChanged(u.id),
-                  ),
-              ],
-            ),
           ),
         ],
       ),
@@ -885,3 +1247,49 @@ class _FilterChip extends StatelessWidget {
     );
   }
 }
+
+/// Empreinte 🐾 qui apparaît (fade + léger scale) avec un délai initial et
+/// une inclinaison, pour simuler une foulée quand on en aligne plusieurs.
+///
+/// Le cycle complet dure ~3 s : apparition en cascade puis reset — comme si
+/// un animal traversait la piste devant nous.
+class _PawPrint extends StatelessWidget {
+  const _PawPrint({required this.delayMs, required this.tiltDeg});
+
+  final int delayMs;
+
+  /// Rotation en tours (unité de flutter_animate : 1.0 = 360°).
+  /// Valeurs typiques : -0.15 / +0.15 pour évoquer patte gauche/droite.
+  final double tiltDeg;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+          angle: tiltDeg * 6.2831853, // tiltDeg tours → radians
+          child: Text(
+            '🐾',
+            style: TextStyle(
+              fontSize: 32,
+              color: forestGreen.withValues(alpha: 0.85),
+            ),
+          ),
+        )
+        .animate(
+          onPlay: (c) => c.repeat(period: const Duration(milliseconds: 3200)),
+          delay: Duration(milliseconds: delayMs),
+        )
+        .fadeIn(
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOut,
+        )
+        .scale(
+          begin: const Offset(0.7, 0.7),
+          end: const Offset(1, 1),
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOut,
+        )
+        .then(delay: const Duration(milliseconds: 1100))
+        .fadeOut(duration: const Duration(milliseconds: 400));
+  }
+}
+

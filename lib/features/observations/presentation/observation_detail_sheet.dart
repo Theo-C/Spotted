@@ -1,10 +1,15 @@
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 
 import '../../../app/theme.dart';
+import '../../../core/utils/date_formatter.dart';
+import '../../../core/widgets/fullscreen_photo_viewer.dart';
 import '../../../shared/models/rarity.dart';
 import '../../auth/data/auth_providers.dart';
 import '../../gamification/data/gamification_providers.dart';
@@ -79,6 +84,11 @@ class ObservationDetailSheet extends ConsumerWidget {
     if (confirmed != true) return;
     try {
       await ref.read(observationRepositoryProvider).delete(item.obs.id);
+      // Reset le focus AVANT les invalidates — sinon JournalScreen garderait
+      // un obs_id qui n'existe plus en base et son `_byObsId[id]` retournerait
+      // null au prochain consume, sans crash mais avec halo silencieusement
+      // cassé jusqu'à la prochaine sélection.
+      ref.read(focusedObservationIdProvider.notifier).state = null;
       ref.invalidate(allObservationsForMapProvider);
       ref.invalidate(observedSpeciesIdsInZoneProvider);
       ref.invalidate(categoriesWithProgressProvider);
@@ -131,18 +141,25 @@ class ObservationDetailSheet extends ConsumerWidget {
             ),
             const SizedBox(height: 16),
             if (item.obs.photoUrl != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: AspectRatio(
-                  aspectRatio: 4 / 3,
-                  child: Image.network(
-                    item.obs.photoUrl!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
-                      color: surfaceMuted,
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.broken_image_outlined,
-                          color: textMuted, size: 32),
+              // Tap → fullscreen zoomable — pratique pour examiner un détail
+              // du plumage / pelage sans avoir à quitter le sheet.
+              GestureDetector(
+                onTap: () =>
+                    openFullscreenPhoto(context, item.obs.photoUrl!),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: AspectRatio(
+                    aspectRatio: 4 / 3,
+                    child: CachedNetworkImage(
+                      imageUrl: item.obs.photoUrl!,
+                      fit: BoxFit.cover,
+                      placeholder: (_, _) => Container(color: surfaceMuted),
+                      errorWidget: (_, _, _) => Container(
+                        color: surfaceMuted,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.broken_image_outlined,
+                            color: textMuted, size: 32),
+                      ),
                     ),
                   ),
                 ),
@@ -174,8 +191,7 @@ class ObservationDetailSheet extends ConsumerWidget {
               children: [
                 _Chip(
                   icon: Icons.calendar_today,
-                  label: DateFormat('d MMM yyyy', 'fr')
-                      .format(item.obs.observedAt),
+                  label: DateFormatter.full(item.obs.observedAt),
                 ),
                 _Chip(
                   icon: Icons.auto_awesome,
@@ -194,9 +210,33 @@ class ObservationDetailSheet extends ConsumerWidget {
                     label: '1ʳᵉ obs',
                     color: forestGreen,
                   ),
+                // Défi du jour — obs validée le jour où c'était l'espèce du
+                // tirage → bonus x2 appliqué à pointsEarned au moment de
+                // l'INSERT (cf. observationPoints).
+                if (item.obs.wasDailySpecies)
+                  _Chip(
+                    icon: Icons.stars,
+                    label: 'Défi du jour',
+                    color: gold,
+                  ),
               ],
             ),
             const SizedBox(height: 12),
+            _MiniLocationMap(
+              lat: item.obs.latitude,
+              lng: item.obs.longitude,
+              onTap: () {
+                // Signale l'obs à focus, ferme le sheet, puis switch sur
+                // l'onglet Carnet — le JournalScreen consomme le provider
+                // dès qu'il est prêt (map + obs chargées) et se centre dessus.
+                ref
+                    .read(focusedObservationIdProvider.notifier)
+                    .state = item.obs.id;
+                Navigator.of(context).pop();
+                context.go('/map');
+              },
+            ),
+            const SizedBox(height: 8),
             _PlaceLine(
               lat: item.obs.latitude,
               lng: item.obs.longitude,
@@ -266,6 +306,144 @@ class ObservationDetailSheet extends ConsumerWidget {
         Rarity.epic => rarityEpic,
         Rarity.legendary => rarityLegendary,
       };
+}
+
+/// Aperçu Mapbox 140 px centré sur l'observation. Non-interactif (les
+/// gestures Flutter reprennent le dessus via EagerGestureRecognizer sur le
+/// parent scrollable — la carte reste statique). Sert de visualisation
+/// rapide "où c'était" sans ouvrir le carnet complet.
+class _MiniLocationMap extends StatefulWidget {
+  const _MiniLocationMap({
+    required this.lat,
+    required this.lng,
+    this.onTap,
+  });
+
+  final double lat;
+  final double lng;
+
+  /// Si non null, un overlay tactile transparent est superposé et intercepte
+  /// tous les tap (les gestures Mapbox restent désactivées de toute façon).
+  /// Un badge "Ouvrir dans le carnet" apparaît en overlay pour l'affordance.
+  final VoidCallback? onTap;
+
+  @override
+  State<_MiniLocationMap> createState() => _MiniLocationMapState();
+}
+
+class _MiniLocationMapState extends State<_MiniLocationMap> {
+  late final CameraViewportState _viewport;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewport = CameraViewportState(
+      center: Point(coordinates: Position(widget.lng, widget.lat)),
+      zoom: 13,
+    );
+  }
+
+  Future<void> _onMapCreated(MapboxMap map) async {
+    await map.scaleBar.updateSettings(ScaleBarSettings(enabled: false));
+    await map.compass.updateSettings(CompassSettings(enabled: false));
+    await map.attribution
+        .updateSettings(AttributionSettings(enabled: false));
+    await map.logo.updateSettings(LogoSettings(enabled: false));
+    // Désactive toutes les gestures : c'est un aperçu, on ne veut pas
+    // que l'user pan/zoome (utiliserait le carnet plein écran pour ça).
+    await map.gestures.updateSettings(GesturesSettings(
+      rotateEnabled: false,
+      scrollEnabled: false,
+      pinchToZoomEnabled: false,
+      doubleTapToZoomInEnabled: false,
+      doubleTouchToZoomOutEnabled: false,
+      quickZoomEnabled: false,
+      pitchEnabled: false,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: 140,
+        child: Stack(
+          children: [
+            MapWidget(
+              viewport: _viewport,
+              styleUri: MapboxStyles.OUTDOORS,
+              onMapCreated: _onMapCreated,
+              // On absorbe les gestures Flutter — sinon la bottom sheet ne
+              // pourrait plus être drag-fermée depuis la zone de la carte.
+              gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                Factory<OneSequenceGestureRecognizer>(
+                  VerticalDragGestureRecognizer.new,
+                ),
+              },
+            ),
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.only(bottom: 24),
+                child: Icon(
+                  Icons.location_on,
+                  color: terracotta,
+                  size: 32,
+                ),
+              ),
+            ),
+            if (widget.onTap != null) ...[
+              // Overlay tactile plein — comme les gestures Mapbox sont off,
+              // c'est un simple InkWell qui capture le tap.
+              Positioned.fill(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(onTap: widget.onTap),
+                ),
+              ),
+              // Badge d'affordance : indique clairement que la carte est
+              // cliquable et où le tap mène.
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: surfaceBase.withValues(alpha: 0.95),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: forestGreen, width: 1),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.map_outlined,
+                        size: 12,
+                        color: forestGreen,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'CARNET',
+                        style: GoogleFonts.karla(
+                          fontSize: 9,
+                          letterSpacing: 1.5,
+                          fontWeight: FontWeight.bold,
+                          color: forestGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Affiche le lieu de l'observation via reverse-geocoding Mapbox.
@@ -342,3 +520,4 @@ class _Chip extends StatelessWidget {
     );
   }
 }
+

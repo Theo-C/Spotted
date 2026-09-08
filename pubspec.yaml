@@ -1,7 +1,7 @@
 name: spotted
 description: "Spotted — carnet naturaliste personnel (Théo & Axelle)."
 publish_to: 'none'
-version: 1.6.1+8
+version: 1.8.0+14
 
 environment:
   sdk: ^3.12.0-327.4.beta
@@ -74,6 +74,10 @@ dependencies:
 
   # Formats date/nombre fr_FR
   intl: ^0.19.0
+
+  # Cache disque + fade-in pour les images réseau (thumbnails espèces,
+  # photos d'observation). Évite le re-fetch au scroll et le flash blanc.
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:

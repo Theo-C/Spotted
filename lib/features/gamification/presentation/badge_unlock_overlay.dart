@@ -40,6 +40,13 @@ class _BadgeUnlockOverlayState extends ConsumerState<BadgeUnlockOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    // Watch always-alive de badgesProvider — sinon il ne tourne QUE quand
+    // l'user est sur la page badges / le teaser du profil, et l'auto-unlock
+    // (INSERT + push dans la file de célébration) ne se déclenche jamais
+    // depuis la Home après une nouvelle obs. Bug remonté 2026-09.
+    // Le résultat n'est pas utilisé ici — c'est purement pour keep alive.
+    ref.watch(badgesProvider);
+
     // À chaque évolution de la file, on tente de célébrer le prochain.
     ref.listen<List<String>>(pendingBadgeCelebrationsProvider, (_, _) {
       _maybeCelebrateNext();
@@ -131,6 +138,8 @@ class _BadgeUnlockDialogState extends State<_BadgeUnlockDialog>
         BadgeCategory.rarity => terracotta,
         BadgeCategory.photo => forestGreen,
         BadgeCategory.streak => terracotta,
+        BadgeCategory.collection => forestGreen,
+        BadgeCategory.mystery => gold,
       };
 
   /// Le nom du badge a un shimmer permanent pour la catégorie rarity (rare

@@ -46,16 +46,20 @@ class AiCallSnapshot {
 }
 
 class SpeciesIdentificationService {
-  SpeciesIdentificationService(this._dio);
+  SpeciesIdentificationService(this._dio, this._onSnapshot);
 
   final Dio _dio;
+
+  /// Callback appelé après chaque tentative d'identif (succès OU erreur).
+  /// Câblé sur le [LastAiCallNotifier] côté provider pour que l'écran de
+  /// debug se rafraîchisse réactivement. Avant on stockait juste un champ
+  /// privé, mais Riverpod ne détecte pas les mutations internes d'un Provider
+  /// non-stateful → l'écran restait vide.
+  final void Function(AiCallSnapshot) _onSnapshot;
 
   static const _model = 'claude-sonnet-4-6';
   static const _endpoint = 'https://api.anthropic.com/v1/messages';
 
-  /// Dernier appel effectué (succès OU erreur). Lu par l'écran de debug.
-  AiCallSnapshot? _lastCall;
-  AiCallSnapshot? get lastCall => _lastCall;
   static const String systemPrompt = _systemPrompt;
 
   // Budget de raisonnement avant la réponse finale. 4000 tokens permettent à
@@ -180,7 +184,7 @@ suivant EXACTEMENT ce schéma :
     try {
       final bytes = await _compressForVision(photo);
       if (bytes == null) {
-        _lastCall = AiCallSnapshot(
+        _onSnapshot(AiCallSnapshot(
           timestamp: DateTime.now(),
           model: _model,
           userPrompt: userText,
@@ -188,7 +192,7 @@ suivant EXACTEMENT ce schéma :
           parsed: null,
           durationMs: stopwatch.elapsedMilliseconds,
           error: 'Compression image échouée',
-        );
+        ));
         return null;
       }
       final encoded = base64Encode(bytes);
@@ -277,7 +281,7 @@ suivant EXACTEMENT ce schéma :
           }
         }
       }
-      _lastCall = AiCallSnapshot(
+      _onSnapshot(AiCallSnapshot(
         timestamp: DateTime.now(),
         model: _model,
         userPrompt: userText,
@@ -285,13 +289,13 @@ suivant EXACTEMENT ce schéma :
         parsed: parsed,
         durationMs: stopwatch.elapsedMilliseconds,
         error: error,
-      );
+      ));
       return parsed;
     } on DioException catch (e) {
       final msg =
           'Dio error : ${e.message} (HTTP ${e.response?.statusCode}) ${e.response?.data}';
       developer.log(msg, name: 'species_id');
-      _lastCall = AiCallSnapshot(
+      _onSnapshot(AiCallSnapshot(
         timestamp: DateTime.now(),
         model: _model,
         userPrompt: userText,
@@ -299,12 +303,12 @@ suivant EXACTEMENT ce schéma :
         parsed: null,
         durationMs: stopwatch.elapsedMilliseconds,
         error: msg,
-      );
+      ));
       return null;
     } catch (e) {
       developer.log('Unexpected error during identification: $e',
           name: 'species_id');
-      _lastCall = AiCallSnapshot(
+      _onSnapshot(AiCallSnapshot(
         timestamp: DateTime.now(),
         model: _model,
         userPrompt: userText,
@@ -312,7 +316,7 @@ suivant EXACTEMENT ce schéma :
         parsed: null,
         durationMs: stopwatch.elapsedMilliseconds,
         error: 'Erreur inattendue : $e',
-      );
+      ));
       return null;
     }
   }
@@ -406,12 +410,24 @@ suivant EXACTEMENT ce schéma :
 
 final speciesIdentificationServiceProvider =
     Provider<SpeciesIdentificationService>((ref) {
-  return SpeciesIdentificationService(Dio());
+  return SpeciesIdentificationService(
+    Dio(),
+    (snap) => ref.read(lastAiCallProvider.notifier).set(snap),
+  );
 });
 
-/// Provider du dernier snapshot d'appel IA. Re-évalué à chaque rebuild
-/// — l'écran de debug du profil l'utilise pour afficher prompt + réponse.
-/// Renvoie null tant qu'aucun appel n'a été fait pendant cette session.
-final lastAiCallProvider = Provider<AiCallSnapshot?>((ref) {
-  return ref.watch(speciesIdentificationServiceProvider).lastCall;
-});
+/// Notifier qui détient le dernier snapshot d'appel IA. Le service push via
+/// son callback `_onSnapshot` → l'écran de debug se rafraîchit réactivement.
+/// Renvoie null tant qu'aucun appel n'a été fait pendant cette session
+/// (perdu au restart de l'app — volontaire, c'est un outil de debug "live").
+class LastAiCallNotifier extends Notifier<AiCallSnapshot?> {
+  @override
+  AiCallSnapshot? build() => null;
+
+  void set(AiCallSnapshot snap) => state = snap;
+}
+
+final lastAiCallProvider =
+    NotifierProvider<LastAiCallNotifier, AiCallSnapshot?>(
+  LastAiCallNotifier.new,
+);

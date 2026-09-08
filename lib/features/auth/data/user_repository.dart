@@ -27,13 +27,34 @@ class UserRepository {
     return AppUser.fromJson(row);
   }
 
-  /// Tous les profils (Théo + Axelle).
+  /// Tous les profils. RLS 0002 autorise SELECT à tous les authentifiés
+  /// (utilisé côté admin / futur système d'équipe).
   Future<List<AppUser>> getAll() async {
     final rows = await _client.from('users').select();
     return (rows as List)
         .cast<Map<String, dynamic>>()
         .map(AppUser.fromJson)
         .toList();
+  }
+
+  /// Met à jour pseudo + couleur accent + flag profil complet.
+  /// Appelé par ProfileSetupScreen après le 1er login des nouveaux users.
+  Future<AppUser> completeProfile({
+    required String userId,
+    required String pseudo,
+    required String colorAccent,
+  }) async {
+    final row = await _client
+        .from('users')
+        .update({
+          'pseudo': pseudo,
+          'color_accent': colorAccent,
+          'profile_completed': true,
+        })
+        .eq('id', userId)
+        .select()
+        .single();
+    return AppUser.fromJson(row);
   }
 }
 

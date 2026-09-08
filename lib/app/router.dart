@@ -5,13 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/services/onboarding_service.dart';
+import '../features/auth/data/auth_providers.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/auth/presentation/profile_setup_screen.dart';
 import '../features/gamification/presentation/badges_screen.dart';
 import '../features/observations/presentation/journal_screen.dart';
 import '../features/species/presentation/ai_debug_screen.dart';
 import '../features/observations/presentation/new_observation_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
+import '../features/onboarding/presentation/tuto_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/territories/presentation/home_screen.dart';
 import '../features/species/presentation/species_detail_screen.dart';
@@ -36,14 +39,34 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isLoggedIn = auth.currentAuthUser != null;
       final loc = state.matchedLocation;
       final isOnLogin = loc == '/login';
+      final isOnProfileSetup = loc == '/profile/setup';
       final isOnOnboarding = loc == '/onboarding';
 
       if (!isLoggedIn && !isOnLogin) return '/login';
       if (isLoggedIn && isOnLogin) return '/';
 
-      // Onboarding : tant qu'il n'est pas terminé, on force l'écran dédié.
-      // L'état est pré-chargé au boot via OnboardingService.init() dans
-      // main.dart — pas de race au 1er build.
+      // Setup profil : nouveau signup Google/MagicLink → trigger DB a créé
+      // une ligne public.users avec profile_completed=false + pseudo par
+      // défaut (préfixe email). On force l'écran pseudo+couleur avant
+      // d'aller plus loin. Silencieux si le AppUser n'a pas encore chargé
+      // (asData null) — on laisse passer, le prochain refresh redirigera.
+      final appUser = ref.read(currentAppUserProvider).asData?.value;
+      if (isLoggedIn &&
+          appUser != null &&
+          !appUser.profileCompleted &&
+          !isOnProfileSetup) {
+        return '/profile/setup';
+      }
+      if (isLoggedIn &&
+          appUser != null &&
+          appUser.profileCompleted &&
+          isOnProfileSetup) {
+        return '/';
+      }
+
+      // Onboarding perms : tant qu'il n'est pas terminé, on force l'écran
+      // dédié. L'état est pré-chargé au boot via OnboardingService.init()
+      // dans main.dart — pas de race au 1er build.
       if (isLoggedIn && !onboarding.completed && !isOnOnboarding) {
         return '/onboarding';
       }
@@ -58,8 +81,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const LoginScreen(),
       ),
       GoRoute(
+        path: '/profile/setup',
+        builder: (_, _) => const ProfileSetupScreen(),
+      ),
+      GoRoute(
         path: '/onboarding',
         builder: (_, _) => const OnboardingScreen(),
+      ),
+      GoRoute(
+        path: '/tuto',
+        builder: (_, _) => const TutoScreen(),
       ),
       GoRoute(
         path: '/observation/new',
@@ -76,10 +107,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => SpeciesEditorScreen(
           speciesId: state.pathParameters['sid']!,
         ),
-      ),
-      GoRoute(
-        path: '/badges',
-        builder: (_, _) => const BadgesScreen(),
       ),
       GoRoute(
         path: '/ai-debug',
@@ -136,6 +163,15 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/profile',
                 builder: (_, _) => const ProfileScreen(),
+                routes: [
+                  // Sous-route → hérite du shell (bottom nav visible sur
+                  // la grille badges). Avant, /badges était top-level et
+                  // masquait le footer, désorientation au tap "Voir badges".
+                  GoRoute(
+                    path: 'badges',
+                    builder: (_, _) => const BadgesScreen(),
+                  ),
+                ],
               ),
             ],
           ),

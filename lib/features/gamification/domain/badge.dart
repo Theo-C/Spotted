@@ -15,6 +15,12 @@ enum BadgeCategory {
 
   /// Paliers de série (J7, J30, J100, J365).
   streak,
+
+  /// Collections thématiques (mésanges, pics, corvidés…).
+  collection,
+
+  /// Badges secrets — description masquée tant qu'ils ne sont pas débloqués.
+  mystery,
 }
 
 /// Définition d'un badge. Les badges sont définis en CODE (cf. allBadges plus
@@ -28,6 +34,9 @@ class BadgeDef {
     required this.icon,
     required this.category,
     required this.progressFn,
+    this.isHidden = false,
+    this.hiddenIcon,
+    this.hiddenHint,
   });
 
   /// Slug stable utilisé en clé DB (user_badges.badge_id). Ne JAMAIS
@@ -44,6 +53,20 @@ class BadgeDef {
   final String icon;
 
   final BadgeCategory category;
+
+  /// Badge mystère : tant qu'il n'est pas débloqué, l'UI masque nom, icône
+  /// et description. La condition ne doit pas être devinable depuis la fiche
+  /// — sinon c'est un badge normal.
+  final bool isHidden;
+
+  /// Icône affichée à la place de [icon] tant que le badge mystère est
+  /// verrouillé. Choisir un emoji "atmosphérique" qui donne du flavor
+  /// sans révéler la condition (ex: 🌒 pour un badge nocturne).
+  final String? hiddenIcon;
+
+  /// Phrase cryptique affichée à la place du nom/description tant que le
+  /// badge mystère est verrouillé (ex: "L'heure des chasseurs silencieux").
+  final String? hiddenHint;
 
   /// Calcule la progression de l'user vers ce badge (0.0 → 1.0).
   /// Le badge est considéré comme méritant un unlock dès que progress >= 1.0.
@@ -214,6 +237,165 @@ const List<BadgeDef> allBadges = [
     category: BadgeCategory.streak,
     progressFn: _streak365,
   ),
+
+  // ===== COLLECTIONS =====
+  // Comptage par matching sur le commonName (case-insensitive, sans accents).
+  // Les seuils sont volontairement bas pour rester atteignables au MVP Oise
+  // sans avoir la collection complète — ajuster quand le catalogue grandit.
+  BadgeDef(
+    id: 'gang_mesanges',
+    name: 'Chef du gang des mésanges',
+    description: 'Observe 4 espèces différentes de mésanges.',
+    icon: '🐦',
+    category: BadgeCategory.collection,
+    progressFn: _gangMesanges,
+  ),
+  BadgeDef(
+    id: 'casse_bois',
+    name: 'Casse-bois',
+    description: 'Observe 3 espèces différentes de pics.',
+    icon: '🪵',
+    category: BadgeCategory.collection,
+    progressFn: _casseBois,
+  ),
+  BadgeDef(
+    id: 'confrerie_noire',
+    name: 'La Confrérie Noire',
+    description: 'Observe 4 espèces différentes de corvidés '
+        '(corneille, corbeau, pie, geai, choucas).',
+    icon: '🖤',
+    category: BadgeCategory.collection,
+    progressFn: _confrerieNoire,
+  ),
+  BadgeDef(
+    id: 'rapace_hunter',
+    name: 'Tête de faucon',
+    description: 'Observe 3 espèces différentes de rapaces diurnes '
+        '(faucon, buse, milan, épervier, aigle, busard).',
+    icon: '🦅',
+    category: BadgeCategory.collection,
+    progressFn: _rapaceHunter,
+  ),
+  BadgeDef(
+    id: 'escadron_aquatique',
+    name: 'Escadron aquatique',
+    description: "Observe 3 espèces d'oiseaux d'eau "
+        '(canard, sarcelle, oie, cygne, foulque, héron, aigrette).',
+    icon: '🦆',
+    category: BadgeCategory.collection,
+    progressFn: _escadronAquatique,
+  ),
+  BadgeDef(
+    id: 'sang_froid',
+    name: 'Sang froid',
+    description: 'Observe 3 reptiles différents '
+        '(couleuvre, vipère, lézard, orvet).',
+    icon: '🦎',
+    category: BadgeCategory.collection,
+    progressFn: _sangFroid,
+  ),
+  BadgeDef(
+    id: 'prince_des_bois',
+    name: 'Prince des bois',
+    description: 'Observe 3 grands mammifères '
+        '(cerf, chevreuil, sanglier, biche, daim).',
+    icon: '🦌',
+    category: BadgeCategory.collection,
+    progressFn: _princeDesBois,
+  ),
+  BadgeDef(
+    id: 'chuchoteur_ombres',
+    name: "Chuchoteur d'ombres",
+    description: 'Observe 2 rapaces nocturnes '
+        '(chouette, hibou, effraie).',
+    icon: '🦉',
+    category: BadgeCategory.collection,
+    progressFn: _chuchoteurOmbres,
+  ),
+
+  // ===== MYSTÈRES =====
+  // Volontairement non devinables depuis la fiche : nom, icône et
+  // description sont masqués tant qu'ils ne sont pas débloqués.
+  // Chaque mystère a son propre `hiddenIcon` + `hiddenHint` pour un
+  // teasing plus atmosphérique que "?????".
+  BadgeDef(
+    id: 'night_owl',
+    name: 'Chouette de nuit',
+    description: 'Observation entre 22h et 5h du matin.',
+    icon: '🌙',
+    hiddenIcon: '🌒',
+    hiddenHint: 'Certains attendent que la lumière tombe…',
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _nightOwl,
+  ),
+  BadgeDef(
+    id: 'dawn_call',
+    name: "L'appel de l'aube",
+    description: 'Observation entre 5h et 7h du matin.',
+    icon: '🌅',
+    hiddenIcon: '🌫️',
+    hiddenHint: 'Lève-toi avant le monde…',
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _dawnCall,
+  ),
+  BadgeDef(
+    id: 'rush_hour',
+    name: 'Sprint naturaliste',
+    description: '3 observations enregistrées en moins de 10 minutes.',
+    icon: '⚡',
+    hiddenIcon: '💨',
+    hiddenHint: "Rapide comme l'éclair — trois fois.",
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _rushHour,
+  ),
+  BadgeDef(
+    id: 'nomad',
+    name: 'Nomade',
+    description: 'Observations dans 3 zones différentes.',
+    icon: '🗺️',
+    hiddenIcon: '🧭',
+    hiddenHint: 'Aucune frontière ne t\'arrête.',
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _nomad,
+  ),
+  BadgeDef(
+    id: 'jackpot',
+    name: 'Jackpot',
+    description: '2 espèces légendaires dans la même journée.',
+    icon: '🎰',
+    hiddenIcon: '🎲',
+    hiddenHint: 'La chance sourit — deux fois de suite ?',
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _jackpot,
+  ),
+  BadgeDef(
+    id: 'grand_chelem',
+    name: 'Grand chelem',
+    description: 'Une observation dans chacune des 4 catégories '
+        'dans la même journée.',
+    icon: '🎯',
+    hiddenIcon: '🃏',
+    hiddenHint: 'Le règne animal ne se limite pas à une case.',
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _grandChelem,
+  ),
+  BadgeDef(
+    id: 'bete_noire',
+    name: 'Bête noire',
+    description: 'Observe 5 fois la même espèce (obsession assumée).',
+    icon: '🎭',
+    hiddenIcon: '🔁',
+    hiddenHint: "L'obsession commence par une répétition.",
+    category: BadgeCategory.mystery,
+    isHidden: true,
+    progressFn: _beteNoire,
+  ),
 ];
 
 // =============================================================
@@ -291,3 +473,171 @@ BadgeProgress _streak7(BadgeContext ctx) => _streakN(ctx, 7);
 BadgeProgress _streak30(BadgeContext ctx) => _streakN(ctx, 30);
 BadgeProgress _streak100(BadgeContext ctx) => _streakN(ctx, 100);
 BadgeProgress _streak365(BadgeContext ctx) => _streakN(ctx, 365);
+
+// -------------------------------------------------------------
+// Collections — matching sur commonName (insensible à la casse/accents).
+// -------------------------------------------------------------
+
+String _normalize(String s) => s
+    .toLowerCase()
+    .replaceAll(RegExp(r'[àâä]'), 'a')
+    .replaceAll(RegExp(r'[éèêë]'), 'e')
+    .replaceAll(RegExp(r'[îï]'), 'i')
+    .replaceAll(RegExp(r'[ôö]'), 'o')
+    .replaceAll(RegExp(r'[ûüù]'), 'u')
+    .replaceAll('ç', 'c');
+
+/// Compte le nombre d'espèces distinctes dont le commonName contient un des
+/// mots-clés (après normalisation).
+int _distinctSpeciesMatching(BadgeContext ctx, List<String> keywords) {
+  final ids = <String>{};
+  for (final o in ctx.observations) {
+    final name = o.species?.commonName;
+    if (name == null) continue;
+    final n = _normalize(name);
+    if (keywords.any(n.contains)) ids.add(o.obs.speciesId);
+  }
+  return ids.length;
+}
+
+BadgeProgress _collectionN(
+  BadgeContext ctx,
+  List<String> keywords,
+  int target,
+  String label,
+) {
+  final n = _distinctSpeciesMatching(ctx, keywords);
+  return BadgeProgress(
+    value: (n / target).clamp(0.0, 1.0),
+    label: '$n / $target $label',
+  );
+}
+
+BadgeProgress _gangMesanges(BadgeContext ctx) =>
+    _collectionN(ctx, ['mesange'], 4, 'mésanges');
+
+BadgeProgress _casseBois(BadgeContext ctx) =>
+    _collectionN(ctx, ['pic '], 3, 'pics');
+
+BadgeProgress _confrerieNoire(BadgeContext ctx) => _collectionN(
+      ctx,
+      ['corneille', 'corbeau', 'pie', 'geai', 'choucas'],
+      4,
+      'corvidés',
+    );
+
+BadgeProgress _rapaceHunter(BadgeContext ctx) => _collectionN(
+      ctx,
+      ['faucon', 'buse', 'milan', 'epervier', 'aigle', 'busard'],
+      3,
+      'rapaces',
+    );
+
+BadgeProgress _escadronAquatique(BadgeContext ctx) => _collectionN(
+      ctx,
+      ['canard', 'sarcelle', 'oie', 'cygne', 'foulque', 'heron', 'aigrette'],
+      3,
+      'aquatiques',
+    );
+
+BadgeProgress _sangFroid(BadgeContext ctx) => _collectionN(
+      ctx,
+      ['couleuvre', 'vipere', 'lezard', 'orvet'],
+      3,
+      'reptiles',
+    );
+
+BadgeProgress _princeDesBois(BadgeContext ctx) => _collectionN(
+      ctx,
+      ['cerf', 'chevreuil', 'sanglier', 'biche', 'daim'],
+      3,
+      'grands mammifères',
+    );
+
+BadgeProgress _chuchoteurOmbres(BadgeContext ctx) => _collectionN(
+      ctx,
+      ['chouette', 'hibou', 'effraie'],
+      2,
+      'rapaces nocturnes',
+    );
+
+// -------------------------------------------------------------
+// Mystères — pas de label pour ne pas fuiter la condition.
+// -------------------------------------------------------------
+
+BadgeProgress _nightOwl(BadgeContext ctx) {
+  final hit = ctx.observations.any((o) {
+    final h = o.obs.observedAt.toLocal().hour;
+    return h >= 22 || h < 5;
+  });
+  return BadgeProgress(value: hit ? 1.0 : 0.0);
+}
+
+BadgeProgress _dawnCall(BadgeContext ctx) {
+  final hit = ctx.observations.any((o) {
+    final h = o.obs.observedAt.toLocal().hour;
+    return h >= 5 && h < 7;
+  });
+  return BadgeProgress(value: hit ? 1.0 : 0.0);
+}
+
+BadgeProgress _rushHour(BadgeContext ctx) {
+  if (ctx.observations.length < 3) return const BadgeProgress(value: 0.0);
+  // observedAt reflète le moment de la scène (EXIF), pas de la saisie —
+  // on utilise createdAt côté BDD si dispo dans le modèle, sinon on retombe
+  // sur observedAt. La condition "3 en 10 min" reste sémantiquement OK.
+  final times = ctx.observations
+      .map((o) => o.obs.observedAt.millisecondsSinceEpoch)
+      .toList()
+    ..sort();
+  for (var i = 0; i <= times.length - 3; i++) {
+    if (times[i + 2] - times[i] <= 10 * 60 * 1000) {
+      return const BadgeProgress(value: 1.0);
+    }
+  }
+  return const BadgeProgress(value: 0.0);
+}
+
+BadgeProgress _nomad(BadgeContext ctx) {
+  final zones = ctx.observations
+      .map((o) => o.obs.zoneId)
+      .whereType<String>()
+      .toSet();
+  return BadgeProgress(value: (zones.length / 3).clamp(0.0, 1.0));
+}
+
+BadgeProgress _jackpot(BadgeContext ctx) {
+  final legByDay = <String, Set<String>>{};
+  for (final o in ctx.observations) {
+    if (o.rarity != Rarity.legendary) continue;
+    final d = o.obs.observedAt.toLocal();
+    final key = '${d.year}-${d.month}-${d.day}';
+    legByDay.putIfAbsent(key, () => {}).add(o.obs.speciesId);
+  }
+  final hit = legByDay.values.any((s) => s.length >= 2);
+  return BadgeProgress(value: hit ? 1.0 : 0.0);
+}
+
+BadgeProgress _grandChelem(BadgeContext ctx) {
+  // On group par jour, puis on regarde si les 4 catégories sont couvertes.
+  // categoryId absent (species null) → obs ignorée.
+  final byDay = <String, Set<String>>{};
+  for (final o in ctx.observations) {
+    final cat = o.species?.categoryId;
+    if (cat == null) continue;
+    final d = o.obs.observedAt.toLocal();
+    final key = '${d.year}-${d.month}-${d.day}';
+    byDay.putIfAbsent(key, () => {}).add(cat);
+  }
+  final hit = byDay.values.any((s) => s.length >= 4);
+  return BadgeProgress(value: hit ? 1.0 : 0.0);
+}
+
+BadgeProgress _beteNoire(BadgeContext ctx) {
+  final counts = <String, int>{};
+  for (final o in ctx.observations) {
+    counts[o.obs.speciesId] = (counts[o.obs.speciesId] ?? 0) + 1;
+  }
+  final hit = counts.values.any((c) => c >= 5);
+  return BadgeProgress(value: hit ? 1.0 : 0.0);
+}

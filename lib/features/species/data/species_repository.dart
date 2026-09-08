@@ -23,6 +23,34 @@ class SpeciesRepository {
         .toList();
   }
 
+  /// Lookup par nom scientifique. Renvoie null si l'espèce n'est pas encore
+  /// au catalogue. Utilisé au submit du form d'ajout pour détecter les
+  /// doublons — dans ce cas on ne CREATE pas, on ajoute simplement le lien
+  /// vers les zones manquantes dans `species_zones`.
+  Future<Species?> getByScientificName(String scientificName) async {
+    final row = await _client
+        .from('species')
+        .select()
+        .eq('scientific_name', scientificName)
+        .maybeSingle();
+    if (row == null) return null;
+    return Species.fromJson(row);
+  }
+
+  /// Zones auxquelles une espèce est déjà rattachée. Utilisé pour ne pas
+  /// re-insérer un lien species_zones existant (violation de la contrainte
+  /// unique (species_id, zone_id)).
+  Future<Set<String>> getZoneIdsForSpecies(String speciesId) async {
+    final rows = await _client
+        .from('species_zones')
+        .select('zone_id')
+        .eq('species_id', speciesId);
+    return (rows as List)
+        .cast<Map<String, dynamic>>()
+        .map((r) => r['zone_id'] as String)
+        .toSet();
+  }
+
   Future<Species> getById(String id) async {
     final row = await _client
         .from('species')

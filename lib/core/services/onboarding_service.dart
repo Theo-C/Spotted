@@ -37,6 +37,16 @@ class OnboardingService extends ChangeNotifier {
     _completed = true;
     notifyListeners();
   }
+
+  /// Ré-arme l'onboarding pour que l'user puisse le rejouer comme tuto
+  /// (bouton "Revoir le tuto" dans le Profil). Le router redirect détecte
+  /// le flag repassé à false et pousse vers /onboarding.
+  Future<void> markIncomplete() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kOnboardingComplete, false);
+    _completed = false;
+    notifyListeners();
+  }
 }
 
 final onboardingServiceProvider = Provider<OnboardingService>((ref) {
